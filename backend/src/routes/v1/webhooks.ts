@@ -5,6 +5,14 @@ import { v4 as uuidv4 } from 'uuid'
 import { prisma } from '../../lib/prisma.js'
 import { ticketQueue } from '../../lib/queue.js'
 
+// ---------------------------------------------------------------------------
+// Helper: resolve the first org in the system (webhook fallback — external
+// callers are not users and have no uid-scoped membership).
+// ---------------------------------------------------------------------------
+async function getFirstOrg(): Promise<{ id: string } | null> {
+  return prisma.organization.findFirst()
+}
+
 export const webhooksRouter = Router()
 
 // A05 — All external fields are bounded to prevent storage-amplification attacks.
@@ -63,6 +71,32 @@ webhooksRouter.post('/ticket-closed', async (req, res, next) => {
 
     const { id: sourceId, source, subject, transcript } = parsed.data
 
+    // Resolve orgId: prefer explicit X-Org-Id header, fall back to first org in system.
+    // A01 — Validate that X-Org-Id is a well-formed UUID before querying the DB;
+    // a malformed value would otherwise cause a Prisma-level 500 instead of a clean 400.
+    const headerOrgId = req.headers['x-org-id'] as string | undefined
+    let orgId: string
+    if (headerOrgId) {
+      const uuidResult = z.string().uuid().safeParse(headerOrgId)
+      if (!uuidResult.success) {
+        res.status(400).json({ error: 'X-Org-Id must be a valid UUID' })
+        return
+      }
+      const org = await prisma.organization.findUnique({ where: { id: uuidResult.data } })
+      if (!org) {
+        res.status(400).json({ error: 'Unknown org — X-Org-Id not found' })
+        return
+      }
+      orgId = org.id
+    } else {
+      const org = await getFirstOrg()
+      if (!org) {
+        res.status(503).json({ error: 'No organization configured — create one first' })
+        return
+      }
+      orgId = org.id
+    }
+
     const existing = await prisma.ticket.findUnique({ where: { sourceId } })
     if (existing) {
       res.status(200).json({ message: 'Duplicate — already ingested', id: existing.id })
@@ -75,6 +109,7 @@ webhooksRouter.post('/ticket-closed', async (req, res, next) => {
 
     await ticketQueue.add('process-ticket', {
       ticketId: ticket.id,
+      orgId,
       requestId: res.locals['requestId'] as string | undefined,
     })
 

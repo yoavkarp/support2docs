@@ -8,6 +8,11 @@ vi.mock('../../../lib/prisma.js', () => ({
       findUnique: vi.fn(),
       create: vi.fn(),
     },
+    organization: {
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+    },
   },
 }))
 
@@ -23,6 +28,8 @@ import request from 'supertest'
 import { webhooksRouter } from '../webhooks.js'
 import { prisma } from '../../../lib/prisma.js'
 import { ticketQueue } from '../../../lib/queue.js'
+
+const DEFAULT_ORG = { id: 'org-default', name: 'Default', slug: 'default', logoUrl: null, createdAt: new Date() }
 
 const TEST_SECRET = 'test-webhook-secret'
 
@@ -48,6 +55,10 @@ describe('POST /webhooks/ticket-closed', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     process.env['WEBHOOK_SECRET'] = TEST_SECRET
+    // Default org mocks — getOrCreateOrg path
+    vi.mocked(prisma.organization.findFirst).mockResolvedValue(DEFAULT_ORG)
+    vi.mocked(prisma.organization.findUnique).mockResolvedValue(DEFAULT_ORG)
+    vi.mocked(prisma.organization.create).mockResolvedValue(DEFAULT_ORG)
   })
 
   const validPayload = {
@@ -201,6 +212,89 @@ describe('POST /webhooks/ticket-closed', () => {
       .send(validPayload)
 
     expect(res.status).toBe(401)
+    expect(ticketQueue.add).not.toHaveBeenCalled()
+  })
+
+  // --- Org resolution ---
+
+  it('uses default org when X-Org-Id header is absent', async () => {
+    const createdId = 'f47ac10b-58cc-4372-a567-0e02b2c3d001'
+    vi.mocked(prisma.ticket.findUnique).mockResolvedValue(null)
+    vi.mocked(prisma.ticket.create).mockResolvedValue({
+      id: createdId, sourceId: 'src-org-1', source: 'zendesk',
+      subject: 'Test', transcript: 'test', status: 'PENDING',
+      clusterId: null, createdAt: new Date(), updatedAt: new Date(),
+    })
+    vi.mocked(ticketQueue.add).mockResolvedValue({ id: 'job-org-1' } as never)
+
+    const payload = { id: 'src-org-1', source: 'zendesk', subject: 'Test', transcript: 'test' }
+    const res = await request(app)
+      .post('/webhooks/ticket-closed')
+      .set('x-webhook-signature', sign(payload))
+      .send(payload)
+
+    expect(res.status).toBe(201)
+    // getOrCreateOrg() was used — organization.findFirst was called
+    expect(prisma.organization.findFirst).toHaveBeenCalled()
+    // orgId from default org is passed through to the queue
+    expect(ticketQueue.add).toHaveBeenCalledWith(
+      'process-ticket',
+      expect.objectContaining({ ticketId: createdId, orgId: DEFAULT_ORG.id }),
+    )
+  })
+
+  it('uses org from X-Org-Id header when the org exists', async () => {
+    // X-Org-Id must be a valid UUID (A01 — UUID validation added in Phase 9)
+    const knownOrg = { id: 'a1b2c3d4-e5f6-4789-abcd-ef0123456789', name: 'Known', slug: 'known', logoUrl: null, createdAt: new Date() }
+    vi.mocked(prisma.organization.findUnique).mockResolvedValue(knownOrg)
+    const createdId = 'f47ac10b-58cc-4372-a567-0e02b2c3d002'
+    vi.mocked(prisma.ticket.findUnique).mockResolvedValue(null)
+    vi.mocked(prisma.ticket.create).mockResolvedValue({
+      id: createdId, sourceId: 'src-org-2', source: 'zendesk',
+      subject: 'Test', transcript: 'test', status: 'PENDING',
+      clusterId: null, createdAt: new Date(), updatedAt: new Date(),
+    })
+    vi.mocked(ticketQueue.add).mockResolvedValue({ id: 'job-org-2' } as never)
+
+    const payload = { id: 'src-org-2', source: 'zendesk', subject: 'Test', transcript: 'test' }
+    const res = await request(app)
+      .post('/webhooks/ticket-closed')
+      .set('x-webhook-signature', sign(payload))
+      .set('x-org-id', knownOrg.id)
+      .send(payload)
+
+    expect(res.status).toBe(201)
+    expect(ticketQueue.add).toHaveBeenCalledWith(
+      'process-ticket',
+      expect.objectContaining({ ticketId: createdId, orgId: knownOrg.id }),
+    )
+  })
+
+  it('returns 400 when X-Org-Id is not a valid UUID', async () => {
+    const payload = { id: 'src-org-3', source: 'zendesk', subject: 'Test', transcript: 'test' }
+    const res = await request(app)
+      .post('/webhooks/ticket-closed')
+      .set('x-webhook-signature', sign(payload))
+      .set('x-org-id', 'not-a-uuid')
+      .send(payload)
+
+    expect(res.status).toBe(400)
+    expect(res.body).toHaveProperty('error', 'X-Org-Id must be a valid UUID')
+    expect(ticketQueue.add).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when X-Org-Id header points to an unknown org', async () => {
+    vi.mocked(prisma.organization.findUnique).mockResolvedValue(null)
+
+    const payload = { id: 'src-org-4', source: 'zendesk', subject: 'Test', transcript: 'test' }
+    const res = await request(app)
+      .post('/webhooks/ticket-closed')
+      .set('x-webhook-signature', sign(payload))
+      .set('x-org-id', 'ffffffff-ffff-4fff-bfff-ffffffffffff')
+      .send(payload)
+
+    expect(res.status).toBe(400)
+    expect(res.body).toHaveProperty('error', 'Unknown org — X-Org-Id not found')
     expect(ticketQueue.add).not.toHaveBeenCalled()
   })
 

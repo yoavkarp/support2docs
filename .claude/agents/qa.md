@@ -21,6 +21,8 @@ Use the Edit tool on `TODO.md` to update checkboxes. The QA Agent is the final a
 - Write E2E tests (Playwright) for critical user flows
 - Verify that code coverage meets the 80% threshold before marking tasks `[x]`
 - Run `prisma migrate reset` to verify DB migrations are idempotent
+- **Keep `docs/USER_MANUAL.md` up to date** — after any phase that adds or changes user-facing features (pages, flows, settings, buttons), update the manual to reflect the new behaviour. If the file does not exist yet, create it.
+- **Keep `docs/ENVIRONMENT_SETUP.md` up to date** — after any phase that adds new env vars, services, Docker changes, or third-party integrations, update the setup guide so a new developer can run the project from scratch. If the file does not exist yet, create it.
 
 ## Testing Stack
 | Layer | Tool | Location |
@@ -158,6 +160,8 @@ npx playwright test e2e/auth.spec.ts --project=chromium
 - [ ] No TypeScript errors (`tsc --noEmit`)
 - [ ] No lint errors (`npm run lint --workspaces`)
 - [ ] DB migrations apply cleanly from scratch (`npm run db:reset --workspace=backend`)
+- [ ] `docs/USER_MANUAL.md` updated if any user-facing feature was added or changed
+- [ ] `docs/ENVIRONMENT_SETUP.md` updated if any new env var, service, or integration was added
 
 ## What NOT to do
 - Do not mock the database in integration tests — use the real Dockerized PostgreSQL

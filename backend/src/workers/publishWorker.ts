@@ -2,6 +2,7 @@ import { Worker } from 'bullmq'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma.js'
 import { logger } from '../lib/logger.js'
+import { isSafePublishUrl } from '../lib/url-safety.js'
 
 const RedisEnvSchema = z.object({
   REDIS_HOST: z.string().min(1).default('localhost'),
@@ -14,49 +15,9 @@ const JobDataSchema = z.object({
   requestId: z.string().optional(),
 })
 
-// ---------------------------------------------------------------------------
-// A10 — SSRF mitigation for KB_PUBLISH_URL
-//
-// z.string().url() only validates URL syntax — it accepts private/cloud-metadata
-// addresses such as http://169.254.169.254 (AWS IMDS), http://localhost, or
-// internal Docker network IPs.  We add a custom refinement that:
-//   1. Requires the https: protocol in production (http: allowed only when
-//      NODE_ENV is not 'production', so local dev against http://localhost still works).
-//   2. Blocks all private/loopback/link-local IPv4 and IPv6 ranges.
-//   3. Blocks the cloud metadata hostname used by AWS, GCP, Azure and Ali Cloud.
-//
-// If KB_PUBLISH_URL is absent, publishing is skipped gracefully so local dev
-// without a KB endpoint is unaffected.
-// ---------------------------------------------------------------------------
-
-const PRIVATE_IP_RE =
-  /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|::1$|fc|fd|fe80)/i
-
-const BLOCKED_HOSTNAMES = new Set([
-  'metadata.google.internal',
-  'instance-data',          // AWS Windows metadata alias
-])
-
-function isSafePublishUrl(raw: string): boolean {
-  let parsed: URL
-  try {
-    parsed = new URL(raw)
-  } catch {
-    return false
-  }
-  // Require https in production; allow http only in non-production environments.
-  if (process.env.NODE_ENV === 'production' && parsed.protocol !== 'https:') {
-    return false
-  }
-  // Block non-http(s) schemes entirely (file://, ftp://, data://, javascript://).
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return false
-  }
-  const hostname = parsed.hostname.toLowerCase()
-  if (BLOCKED_HOSTNAMES.has(hostname)) return false
-  if (PRIVATE_IP_RE.test(hostname)) return false
-  return true
-}
+// A10 — SSRF validation for KB_PUBLISH_URL moved to shared lib/url-safety.ts
+// so the same check is applied when an admin stores a kbPublishUrl via the org
+// settings API (PUT /api/v1/org/settings).  See url-safety.ts for full details.
 
 const KB_PUBLISH_URL_SCHEMA = z
   .string()

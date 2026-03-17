@@ -27,6 +27,13 @@ vi.mock('bullmq', () => {
 // ---------------------------------------------------------------------------
 vi.mock('../../lib/prisma.js', () => ({
   prisma: {
+    organization: {
+      findFirst: vi.fn(),
+      create: vi.fn(),
+    },
+    organizationSettings: {
+      findUnique: vi.fn(),
+    },
     cluster: {
       findUniqueOrThrow: vi.fn(),
     },
@@ -34,7 +41,19 @@ vi.mock('../../lib/prisma.js', () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
     },
+    draftEvent: {
+      create: vi.fn().mockResolvedValue(undefined),
+    },
   },
+}))
+
+// ---------------------------------------------------------------------------
+// Mock crypto helpers
+// ---------------------------------------------------------------------------
+vi.mock('../../lib/crypto.js', () => ({
+  decrypt: vi.fn((v: string) => `decrypted:${v}`),
+  encrypt: vi.fn((v: string) => `encrypted:${v}`),
+  mask: vi.fn((v: string | null) => (v ? `****${v.slice(-4)}` : null)),
 }))
 
 // ---------------------------------------------------------------------------
@@ -86,10 +105,12 @@ import { prisma } from '../../lib/prisma.js'
 import { openai } from '../../lib/openai.js'
 import { buildKbDraftPrompt } from '../../lib/prompts/kb-draft.js'
 import { logger } from '../../lib/logger.js'
+import * as cryptoLib from '../../lib/crypto.js'
 import { startSynthesisWorker } from '../synthesisWorker.js'
 
 const CLUSTER_UUID = 'b1ffc3dd-1d0c-4ef8-aa7e-7cc0ce2c5d22'
 const DRAFT_UUID = 'c2aad4ee-2e1d-4ef8-bb8f-8dd1df3d6e33'
+const ORG_UUID = 'a0000000-0000-4000-8000-000000000001'
 
 function getLastWorkerProcessor() {
   const calls = vi.mocked(Worker).mock.calls
@@ -115,6 +136,9 @@ describe('startSynthesisWorker()', () => {
     vi.clearAllMocks()
     process.env['REDIS_HOST'] = 'localhost'
     process.env['REDIS_PORT'] = '6379'
+    // Default: single-org mode returns a default org; no org settings in DB
+    vi.mocked(prisma.organization.findFirst).mockResolvedValue({ id: ORG_UUID } as never)
+    vi.mocked(prisma.organizationSettings.findUnique).mockResolvedValue(null)
   })
 
   it('creates a BullMQ Worker on the synthesis queue', () => {
@@ -341,6 +365,148 @@ describe('startSynthesisWorker()', () => {
       expect(logger.error).toHaveBeenCalledWith(
         { jobId: 'job-10', err: fakeErr },
         'Synthesis worker job failed',
+      )
+    })
+  })
+
+  describe('processor — org settings integration', () => {
+    it('reads clusterThreshold from org settings when present', async () => {
+      vi.mocked(prisma.organizationSettings.findUnique).mockResolvedValue({
+        orgId: ORG_UUID,
+        clusterThreshold: 0.75,
+        minClusterSize: 3,
+        kbPublishUrl: 'https://kb.example.com/publish',
+        zendeskApiKey: null,
+        intercomToken: null,
+      } as never)
+      vi.mocked(prisma.cluster.findUniqueOrThrow).mockResolvedValue(mockCluster as never)
+      vi.mocked(prisma.draft.findFirst).mockResolvedValue(null)
+      vi.mocked(openai.chat.completions.create).mockResolvedValue({
+        choices: [{ message: { content: 'Title\nContent from org settings test' } }],
+      } as never)
+      vi.mocked(prisma.draft.create).mockResolvedValue({ id: DRAFT_UUID } as never)
+
+      startSynthesisWorker()
+      const processor = getLastWorkerProcessor()
+      await processor({ id: 'job-os-1', data: { clusterId: CLUSTER_UUID, orgId: ORG_UUID } })
+
+      // Org settings were fetched for the provided orgId
+      expect(prisma.organizationSettings.findUnique).toHaveBeenCalledWith({
+        where: { orgId: ORG_UUID },
+      })
+      // Draft was created (settings were applied — processor ran to completion)
+      expect(prisma.draft.create).toHaveBeenCalled()
+      // Confirm the logger logged the resolved threshold from org settings (0.75)
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ clusterThreshold: 0.75, minClusterSize: 3 }),
+        expect.stringContaining('Resolved org settings'),
+      )
+    })
+
+    it('falls back to env var when org settings is null', async () => {
+      // organizationSettings.findUnique already returns null from beforeEach
+      process.env['CLUSTER_THRESHOLD'] = '0.55'
+      process.env['MIN_CLUSTER_SIZE'] = '7'
+
+      vi.mocked(prisma.cluster.findUniqueOrThrow).mockResolvedValue(mockCluster as never)
+      vi.mocked(prisma.draft.findFirst).mockResolvedValue(null)
+      vi.mocked(openai.chat.completions.create).mockResolvedValue({
+        choices: [{ message: { content: 'Title\nContent from env fallback test' } }],
+      } as never)
+      vi.mocked(prisma.draft.create).mockResolvedValue({ id: DRAFT_UUID } as never)
+
+      startSynthesisWorker()
+      const processor = getLastWorkerProcessor()
+      await processor({ id: 'job-os-2', data: { clusterId: CLUSTER_UUID, orgId: ORG_UUID } })
+
+      // Confirm fallback to env var values (0.55 and 7)
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ clusterThreshold: 0.55, minClusterSize: 7 }),
+        expect.stringContaining('Resolved org settings'),
+      )
+
+      // Cleanup
+      delete process.env['CLUSTER_THRESHOLD']
+      delete process.env['MIN_CLUSTER_SIZE']
+    })
+
+    it('stamps orgId on the created Draft', async () => {
+      vi.mocked(prisma.cluster.findUniqueOrThrow).mockResolvedValue(mockCluster as never)
+      vi.mocked(prisma.draft.findFirst).mockResolvedValue(null)
+      vi.mocked(openai.chat.completions.create).mockResolvedValue({
+        choices: [{ message: { content: 'Title\nContent for orgId stamp test' } }],
+      } as never)
+      vi.mocked(prisma.draft.create).mockResolvedValue({ id: DRAFT_UUID } as never)
+
+      startSynthesisWorker()
+      const processor = getLastWorkerProcessor()
+      await processor({ id: 'job-os-3', data: { clusterId: CLUSTER_UUID, orgId: ORG_UUID } })
+
+      // Draft.create was called with the resolved orgId
+      expect(prisma.draft.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            orgId: ORG_UUID,
+          }),
+        }),
+      )
+      // DraftEvent.create was also stamped with orgId
+      expect(prisma.draftEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            orgId: ORG_UUID,
+          }),
+        }),
+      )
+    })
+
+    it('decrypts zendeskApiKey from org settings when present', async () => {
+      vi.mocked(prisma.organizationSettings.findUnique).mockResolvedValue({
+        orgId: ORG_UUID,
+        clusterThreshold: 0.65,
+        minClusterSize: 5,
+        kbPublishUrl: null,
+        zendeskApiKey: 'encrypted-key-value',
+        intercomToken: null,
+      } as never)
+      vi.mocked(prisma.cluster.findUniqueOrThrow).mockResolvedValue(mockCluster as never)
+      vi.mocked(prisma.draft.findFirst).mockResolvedValue(null)
+      vi.mocked(openai.chat.completions.create).mockResolvedValue({
+        choices: [{ message: { content: 'Title\nContent' } }],
+      } as never)
+      vi.mocked(prisma.draft.create).mockResolvedValue({ id: DRAFT_UUID } as never)
+
+      startSynthesisWorker()
+      const processor = getLastWorkerProcessor()
+      await processor({ id: 'job-os-4', data: { clusterId: CLUSTER_UUID, orgId: ORG_UUID } })
+
+      // decrypt was called with the stored encrypted value
+      expect(vi.mocked(cryptoLib.decrypt)).toHaveBeenCalledWith('encrypted-key-value')
+    })
+
+    it('falls back to default org when job has no orgId', async () => {
+      // organization.findFirst already returns { id: ORG_UUID } from beforeEach
+      vi.mocked(prisma.cluster.findUniqueOrThrow).mockResolvedValue(mockCluster as never)
+      vi.mocked(prisma.draft.findFirst).mockResolvedValue(null)
+      vi.mocked(openai.chat.completions.create).mockResolvedValue({
+        choices: [{ message: { content: 'Title\nContent' } }],
+      } as never)
+      vi.mocked(prisma.draft.create).mockResolvedValue({ id: DRAFT_UUID } as never)
+
+      startSynthesisWorker()
+      const processor = getLastWorkerProcessor()
+      // No orgId in job data — should fall back to getOrCreateOrg()
+      await processor({ id: 'job-os-5', data: { clusterId: CLUSTER_UUID } })
+
+      expect(prisma.organization.findFirst).toHaveBeenCalled()
+      expect(prisma.organizationSettings.findUnique).toHaveBeenCalledWith({
+        where: { orgId: ORG_UUID },
+      })
+      // Draft stamped with the resolved default org id
+      expect(prisma.draft.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ orgId: ORG_UUID }),
+        }),
       )
     })
   })

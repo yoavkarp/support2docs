@@ -1,0 +1,39 @@
+rules_version = '2';
+// Firebase Storage security rules for Support-to-Docs Pipeline.
+//
+// Trust model:
+//   - org-logos/{orgId}/ — authenticated users may read any org logo (needed
+//     to render the <img> in the sidebar for orgs the user belongs to).
+//     Writes are restricted to authenticated users who are writing to their
+//     own upload path (orgId is validated in the path).  A further server-side
+//     admin-membership check in PATCH /api/v1/org/:orgId ensures the stored
+//     URL is only persisted to the DB when the caller is an org admin.
+//   - All other paths are denied.
+//
+// File-size enforcement (max 2 MB) is declared here as a second line of
+// defence; the primary check is the client-side guard in uploadOrgLogo.ts.
+//
+// IMPORTANT: Deploy these rules with `firebase deploy --only storage` before
+// any production release.  Without deployed rules the project falls back to
+// Firebase Storage defaults, which may allow unauthenticated access depending
+// on the project creation date.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Org logo uploads.
+    // Read: any authenticated user (logos are not sensitive).
+    // Write: authenticated user only, max 2 MB, images only.
+    match /org-logos/{orgId}/{filename} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.resource.size <= 2 * 1024 * 1024
+                   && request.resource.contentType.matches('image/(png|jpeg|webp|gif)');
+    }
+
+    // Deny all other paths by default.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -5,6 +5,11 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
+import { initTheme } from './lib/theme'
+import { OrgProvider } from './contexts/OrgContext'
+
+// Initialize theme before React renders to prevent flash of wrong theme
+initTheme()
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,8 +24,10 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <App />
-        <ReactQueryDevtools initialIsOpen={false} />
+        <OrgProvider>
+          <App />
+          <ReactQueryDevtools initialIsOpen={false} />
+        </OrgProvider>
       </QueryClientProvider>
     </BrowserRouter>
   </StrictMode>

@@ -1,5 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { v4 as uuidv4 } from 'uuid'
+import { DraftEventAction } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { firestoreDb } from '../../lib/firestore.js'
 import { publishQueue } from '../../lib/queue.js'
@@ -10,6 +12,8 @@ export const draftsRouter = Router()
 // --- A05: Injection / A01: Broken Access Control --------------------------------
 // All query params, route params, and request bodies are validated with Zod
 // before use. Pagination is capped to prevent resource-exhaustion attacks.
+// DraftEvent.action is now a Prisma-enforced DB enum (DraftEventAction);
+// insertion sites pass the enum value directly — no string literals accepted.
 // -------------------------------------------------------------------------------
 
 // A01 — Route param :id must be a valid UUID v4; a non-UUID string causes
@@ -123,6 +127,18 @@ draftsRouter.patch('/:id', requireAdmin, async (req, res, next) => {
       data: { ...(title !== undefined && { title }), ...(content !== undefined && { content }) },
     })
 
+    // Record reviewer attribution event
+    const patchClaims = res.locals['claims'] as Record<string, unknown> | undefined
+    await prisma.draftEvent.create({
+      data: {
+        id: uuidv4(),
+        draftId: updated.id,
+        action: DraftEventAction.EDITED,
+        userId: String(patchClaims?.['uid'] ?? res.locals['uid'] ?? 'unknown'),
+        userEmail: String(patchClaims?.['email'] ?? ''),
+      },
+    })
+
     // Sync to Firestore for real-time collaborative editing indicator in the FE.
     await firestoreDb.collection('drafts').doc(updated.id).set(
       {
@@ -169,6 +185,18 @@ draftsRouter.post('/:id/approve', requireAdmin, async (req, res, next) => {
       data: { status: 'APPROVED' },
     })
 
+    // Record reviewer attribution event
+    const approveClaims = res.locals['claims'] as Record<string, unknown> | undefined
+    await prisma.draftEvent.create({
+      data: {
+        id: uuidv4(),
+        draftId: id,
+        action: DraftEventAction.APPROVED,
+        userId: String(approveClaims?.['uid'] ?? res.locals['uid'] ?? 'unknown'),
+        userEmail: String(approveClaims?.['email'] ?? ''),
+      },
+    })
+
     await publishQueue.add('publish-draft', { draftId: id })
 
     res.json(updated)
@@ -203,6 +231,18 @@ draftsRouter.post('/:id/discard', requireAdmin, async (req, res, next) => {
     const updated = await prisma.draft.update({
       where: { id },
       data: { status: 'DISCARDED' },
+    })
+
+    // Record reviewer attribution event
+    const discardClaims = res.locals['claims'] as Record<string, unknown> | undefined
+    await prisma.draftEvent.create({
+      data: {
+        id: uuidv4(),
+        draftId: id,
+        action: DraftEventAction.DISCARDED,
+        userId: String(discardClaims?.['uid'] ?? res.locals['uid'] ?? 'unknown'),
+        userEmail: String(discardClaims?.['email'] ?? ''),
+      },
     })
 
     res.json(updated)

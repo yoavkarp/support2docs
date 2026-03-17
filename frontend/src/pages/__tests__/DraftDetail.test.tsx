@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import DraftDetail from '../DraftDetail'
 import type { DraftDetail as DraftDetailType } from '@/types/draft'
@@ -167,5 +167,88 @@ describe('DraftDetail', () => {
     mockUseDraft.mockReturnValue({ data: baseDraft, isLoading: false, isError: false })
     renderDraftDetail()
     expect(screen.getByLabelText('Live Firestore sync active')).toBeInTheDocument()
+  })
+
+  describe('Edit / Preview toggle', () => {
+    beforeEach(() => {
+      mockUseDraft.mockReturnValue({ data: baseDraft, isLoading: false, isError: false })
+    })
+
+    it('defaults to Edit mode — textarea is visible', () => {
+      renderDraftDetail()
+      expect(screen.getByLabelText('Draft content')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Markdown preview')).not.toBeInTheDocument()
+    })
+
+    it('Edit tab is aria-selected by default', () => {
+      renderDraftDetail()
+      const editTab = screen.getByRole('tab', { name: 'Edit' })
+      expect(editTab).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('Preview tab is not aria-selected by default', () => {
+      renderDraftDetail()
+      const previewTab = screen.getByRole('tab', { name: 'Preview' })
+      expect(previewTab).toHaveAttribute('aria-selected', 'false')
+    })
+
+    it('clicking Preview tab hides the textarea and shows the preview div', () => {
+      renderDraftDetail()
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }))
+      expect(screen.queryByLabelText('Draft content')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Markdown preview')).toBeInTheDocument()
+    })
+
+    it('clicking Edit tab after Preview restores the textarea', () => {
+      renderDraftDetail()
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }))
+      fireEvent.click(screen.getByRole('tab', { name: 'Edit' }))
+      expect(screen.getByLabelText('Draft content')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Markdown preview')).not.toBeInTheDocument()
+    })
+
+    it('Preview renders bold markdown (** → strong)', () => {
+      const boldDraft = { ...baseDraft, content: 'This is **important** information.' }
+      mockUseDraft.mockReturnValue({ data: boldDraft, isLoading: false, isError: false })
+      renderDraftDetail()
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }))
+      const strong = screen.getByText('important')
+      expect(strong.tagName.toLowerCase()).toBe('strong')
+    })
+
+    it('Preview renders heading (# Title → h1)', () => {
+      const headingDraft = { ...baseDraft, content: '# Getting Started' }
+      mockUseDraft.mockReturnValue({ data: headingDraft, isLoading: false, isError: false })
+      renderDraftDetail()
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }))
+      expect(screen.getByRole('heading', { name: 'Getting Started', level: 1 })).toBeInTheDocument()
+    })
+
+    it('Preview renders unordered list items', () => {
+      const listDraft = { ...baseDraft, content: '- First item\n- Second item\n- Third item' }
+      mockUseDraft.mockReturnValue({ data: listDraft, isLoading: false, isError: false })
+      renderDraftDetail()
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }))
+      expect(screen.getByText('First item')).toBeInTheDocument()
+      expect(screen.getByText('Second item')).toBeInTheDocument()
+      expect(screen.getByText('Third item')).toBeInTheDocument()
+    })
+
+    it('Preview renders ordered list items', () => {
+      const olDraft = { ...baseDraft, content: '1. Step one\n2. Step two' }
+      mockUseDraft.mockReturnValue({ data: olDraft, isLoading: false, isError: false })
+      renderDraftDetail()
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }))
+      expect(screen.getByText('Step one')).toBeInTheDocument()
+      expect(screen.getByText('Step two')).toBeInTheDocument()
+    })
+
+    it('Preview shows "Nothing to preview yet." when content is empty', () => {
+      const emptyDraft = { ...baseDraft, content: '' }
+      mockUseDraft.mockReturnValue({ data: emptyDraft, isLoading: false, isError: false })
+      renderDraftDetail()
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }))
+      expect(screen.getByText('Nothing to preview yet.')).toBeInTheDocument()
+    })
   })
 })

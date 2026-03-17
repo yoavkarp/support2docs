@@ -5,6 +5,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
 } from 'firebase/auth'
+import { FileText } from 'lucide-react'
 import { auth } from '@/lib/firebase'
 
 export default function LoginPage() {
@@ -25,7 +26,7 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, email, password)
       navigate('/dashboard')
-    } catch (err) {
+    } catch {
       setError('Invalid email or password.')
     } finally {
       setLoading(false)
@@ -38,7 +39,7 @@ export default function LoginPage() {
     try {
       await signInWithPopup(auth, new GoogleAuthProvider())
       navigate('/dashboard')
-    } catch (err) {
+    } catch {
       setError('Google sign-in failed.')
     } finally {
       setLoading(false)
@@ -46,18 +47,45 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Support2Docs</h1>
-          <p className="text-sm text-muted-foreground">Sign in to your account</p>
+    <div
+      className="flex min-h-screen items-center justify-center"
+      style={{ backgroundColor: 'var(--color-bg)' }}
+    >
+      <div
+        className="w-full max-w-sm space-y-6 rounded-lg border p-8 shadow-lg"
+        style={{
+          backgroundColor: 'var(--color-surface)',
+          borderColor: 'var(--color-border)',
+        }}
+      >
+        {/* Wordmark */}
+        <div className="flex items-center gap-2">
+          <FileText
+            size={24}
+            className="shrink-0"
+            style={{ color: 'var(--color-accent)' }}
+            aria-hidden="true"
+          />
+          <h1
+            className="text-2xl font-semibold tracking-tight"
+            style={{ color: 'var(--color-text-primary)' }}
+          >
+            Support2Docs
+          </h1>
         </div>
+        <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+          Sign in to your account
+        </p>
 
         {error && (
           <p
             role="alert"
             aria-live="assertive"
-            className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            className="rounded-md px-3 py-2 text-sm"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--color-danger) 15%, transparent)',
+              color: 'var(--color-danger)',
+            }}
           >
             {error}
           </p>
@@ -65,7 +93,11 @@ export default function LoginPage() {
 
         <form onSubmit={handleEmailLogin} className="space-y-4">
           <div className="space-y-2">
-            <label htmlFor="email" className="text-sm font-medium">
+            <label
+              htmlFor="email"
+              className="text-sm font-medium"
+              style={{ color: 'var(--color-text-primary)' }}
+            >
               Email
             </label>
             <input
@@ -75,11 +107,20 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-sm"
+              className="flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
+              style={{
+                backgroundColor: 'var(--color-surface-elevated)',
+                borderColor: 'var(--color-border)',
+                color: 'var(--color-text-primary)',
+              }}
             />
           </div>
           <div className="space-y-2">
-            <label htmlFor="password" className="text-sm font-medium">
+            <label
+              htmlFor="password"
+              className="text-sm font-medium"
+              style={{ color: 'var(--color-text-primary)' }}
+            >
               Password
             </label>
             <input
@@ -89,13 +130,19 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-sm"
+              className="flex h-9 w-full rounded-md border px-3 py-1 text-sm shadow-sm outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
+              style={{
+                backgroundColor: 'var(--color-surface-elevated)',
+                borderColor: 'var(--color-border)',
+                color: 'var(--color-text-primary)',
+              }}
             />
           </div>
           <button
             type="submit"
             disabled={loading}
-            className="inline-flex h-9 w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:opacity-50"
+            className="inline-flex h-9 w-full items-center justify-center rounded-md px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:opacity-90 disabled:opacity-50"
+            style={{ backgroundColor: 'var(--color-accent)' }}
           >
             {loading ? 'Signing in...' : 'Sign in'}
           </button>
@@ -103,17 +150,32 @@ export default function LoginPage() {
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t" />
+            <span
+              className="w-full border-t"
+              style={{ borderColor: 'var(--color-border)' }}
+            />
           </div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">or</span>
+            <span
+              className="px-2"
+              style={{
+                backgroundColor: 'var(--color-surface)',
+                color: 'var(--color-text-muted)',
+              }}
+            >
+              or
+            </span>
           </div>
         </div>
 
         <button
           onClick={handleGoogleLogin}
           disabled={loading}
-          className="inline-flex h-9 w-full items-center justify-center rounded-md border bg-background px-4 py-2 text-sm font-medium shadow-sm hover:bg-accent disabled:opacity-50"
+          className="inline-flex h-9 w-full items-center justify-center rounded-md border px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-[var(--color-surface-elevated)] disabled:opacity-50"
+          style={{
+            borderColor: 'var(--color-border)',
+            color: 'var(--color-text-primary)',
+          }}
         >
           Continue with Google
         </button>

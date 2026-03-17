@@ -7,6 +7,9 @@ vi.mock('../../../lib/prisma.js', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    draftEvent: {
+      create: vi.fn().mockResolvedValue(undefined),
+    },
   },
 }))
 
@@ -83,8 +86,8 @@ describe('GET /drafts', () => {
     vi.mocked(prisma.draft.findMany).mockResolvedValue([mockDraft] as never)
     const res = await request(app).get('/drafts')
     expect(res.status).toBe(200)
-    expect(res.body.data).toHaveLength(1)
-    expect(res.body.page).toBe(1)
+    expect(res.body).toHaveLength(1)
+    expect(res.body[0].id).toBe(DRAFT_ID)
   })
 
   it('includes cluster _count in query', async () => {
@@ -131,6 +134,57 @@ describe('GET /drafts', () => {
 
   it('returns 400 when limit is non-numeric', async () => {
     const res = await request(app).get('/drafts?limit=abc')
+    expect(res.status).toBe(400)
+    expect(res.body).toHaveProperty('error')
+  })
+
+  // --- 7.2 smoke tests: all status filter values ---
+
+  it('returns 200 with all drafts when no status filter is applied', async () => {
+    vi.mocked(prisma.draft.findMany).mockResolvedValue([mockDraft] as never)
+    const res = await request(app).get('/drafts')
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.body)).toBe(true)
+    expect(prisma.draft.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: undefined }),
+    )
+  })
+
+  it('returns 200 and passes PENDING_REVIEW filter to query', async () => {
+    const pendingDraft = { ...mockDraft, status: 'PENDING_REVIEW' as const }
+    vi.mocked(prisma.draft.findMany).mockResolvedValue([pendingDraft] as never)
+    const res = await request(app).get('/drafts?status=PENDING_REVIEW')
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.body)).toBe(true)
+    expect(prisma.draft.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: 'PENDING_REVIEW' } }),
+    )
+  })
+
+  it('returns 200 and passes APPROVED filter to query', async () => {
+    const approvedDraft = { ...mockDraft, status: 'APPROVED' as const }
+    vi.mocked(prisma.draft.findMany).mockResolvedValue([approvedDraft] as never)
+    const res = await request(app).get('/drafts?status=APPROVED')
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.body)).toBe(true)
+    expect(prisma.draft.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: 'APPROVED' } }),
+    )
+  })
+
+  it('returns 200 and passes DISCARDED filter to query', async () => {
+    const discardedDraft = { ...mockDraft, status: 'DISCARDED' as const }
+    vi.mocked(prisma.draft.findMany).mockResolvedValue([discardedDraft] as never)
+    const res = await request(app).get('/drafts?status=DISCARDED')
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.body)).toBe(true)
+    expect(prisma.draft.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: 'DISCARDED' } }),
+    )
+  })
+
+  it('returns 400 for status=INVALID', async () => {
+    const res = await request(app).get('/drafts?status=INVALID')
     expect(res.status).toBe(400)
     expect(res.body).toHaveProperty('error')
   })

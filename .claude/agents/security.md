@@ -82,8 +82,20 @@ npm run test:coverage --workspace=frontend
 | `GET /api/v1/drafts` | Yes (Firebase Bearer) | `requireAuth` |
 | `GET /api/v1/drafts/:id` | Yes | `requireAuth` |
 | `PATCH /api/v1/drafts/:id` | Yes | `requireAuth` |
-| `POST /api/v1/drafts/:id/approve` | Yes | `requireAuth` |
-| `POST /api/v1/drafts/:id/discard` | Yes | `requireAuth` |
+| `POST /api/v1/drafts/:id/approve` | Yes | `requireAuth` + `requireAdmin` |
+| `POST /api/v1/drafts/:id/discard` | Yes | `requireAuth` + `requireAdmin` |
+| `GET /api/v1/stats` | No (aggregate counts only — no PII) | — |
+| `GET /api/v1/stats/by-reviewer` | Yes (Firebase Bearer) | `requireAuth` |
+| `GET /api/v1/org` | Yes (Firebase Bearer) | `requireAuth` |
+| `POST /api/v1/org` | Yes (Firebase Bearer) | `requireAuth` + Zod |
+| `PATCH /api/v1/org/:orgId` | Yes | `requireAuth` + DB admin-membership check + `isSafeLogoUrl()` |
+| `DELETE /api/v1/org/:orgId` | Yes | `requireAuth` + DB admin-membership check |
+| `GET /api/v1/org/settings` | Yes (Firebase Bearer) | `requireAuth` |
+| `PUT /api/v1/org/settings` | Yes | `requireAuth` + `requireAdmin` |
+| `GET /api/v1/org/members` | Yes (Firebase Bearer) | `requireAuth` |
+| `POST /api/v1/org/members/invite` | Yes | `requireAuth` + `requireAdmin` |
+| `PATCH /api/v1/org/members/:userId` | Yes | `requireAuth` + `requireAdmin` |
+| `DELETE /api/v1/org/members/:userId` | Yes | `requireAuth` + `requireAdmin` |
 
 ### Trust Boundaries
 - **Webhook endpoint**: external (Zendesk/Intercom) — validate HMAC, never trust payload
@@ -127,42 +139,33 @@ npm run test:coverage --workspace=frontend
 | SEC-001 | `firebase-admin` transitive deps (`@tootallnate/once`) | Low (8 findings) | Fix requires downgrading to firebase-admin v10 — breaking change. Server-side only, not user-exploitable. Revisit when upstream patches. |
 
 ## Finding Log
-_Append new findings here as they are discovered. Format: `[Phase] [Severity] Description — Status`_
+_Only open (unresolved) findings are listed here. Fixed and accepted findings have been retired. Format: `[Phase] [Severity] Description — Status`_
 
-- [Phase 1] [Low] firebase-admin transitive dep chain — Accepted (SEC-001)
-- [Phase 1] [High] A08 — No HMAC webhook signature validation on `POST /api/v1/webhooks/ticket-closed`; any caller could inject arbitrary tickets — Fixed: `verifyWebhookSignature()` using `createHmac`+`timingSafeEqual` added to `webhooks.ts`; raw body captured via `express.json({ verify })` in `index.ts`
-- [Phase 1] [High] A05/A01 — Unvalidated `status` query param cast to Prisma enum without Zod; arbitrary enum values could cause DB errors or information leakage — Fixed: `DraftStatusSchema` (z.enum) added to `ListQuerySchema` in `drafts.ts`
-- [Phase 1] [High] A01 — Unbounded pagination: `limit` and `page` accepted any integer (including `NaN`, negative, or millions), enabling DB resource exhaustion — Fixed: `ListQuerySchema` caps `limit` at 100, `page` min 1 max 10,000
-- [Phase 1] [High] A05 — No input validation on `PATCH /api/v1/drafts/:id` body; no max-length, no type enforcement — Fixed: `PatchBodySchema` (Zod, max 500 chars title / 100k chars content, at least one field required) added to `drafts.ts`
-- [Phase 1] [Medium] A02 — No rate limiting on any endpoint including unauthenticated webhook route — Tracked: TODO.md §2.0
-- [Phase 1] [Medium] A10 — Firebase Admin initializes with `undefined` credentials if env vars are absent instead of failing at startup — Tracked: TODO.md §2.0
-- [Phase 1] [Medium] A02 — `express.json()` had no explicit body size limit (Express default 100kb is implicit) — Partially mitigated: explicit `limit: '200kb'` added in `index.ts`; per-route tuning tracked in TODO.md §2.0
-- [Phase 1] [Medium] A09 — No request correlation ID propagated through webhook events for log tracing — Tracked: TODO.md §2.0
-- [Phase 2] [High] A05 — `TicketClosedPayloadSchema` had no `max()` length constraints on `id`, `source`, `subject`, or `transcript` fields; a signed caller could submit a 50kb `subject` written verbatim to PostgreSQL — Fixed: `min(1).max(N)` bounds added to all four fields in `webhooks.ts`
-- [Phase 2] [High] A01 — Route param `:id` on all `/api/v1/drafts/:id` routes was passed directly to Prisma without UUID validation; non-UUID strings caused a DB-level exception returning a 500 instead of 400 — Fixed: `DraftIdParamSchema` (z.string().uuid()) applied before all four Prisma calls in `drafts.ts`; 4 new test cases added
-- [Phase 2] [Medium] A02 — Redis has no authentication configured in `docker-compose.yml` or BullMQ connection options; any process on the same network can read/write/delete queued jobs — Tracked: TODO.md §3.0
-- [Phase 2] [Medium] A10 — `StartupEnvSchema` in `index.ts` does not validate `OPENAI_API_KEY` or `KB_PUBLISH_URL`; process boots successfully with missing AI credentials and only fails at first LLM call — Tracked: TODO.md §3.0
-- [Phase 2] [Medium] A01 — `X-Request-Id` header value accepted from callers without length or content validation; long or newline-injected values could corrupt structured log output — Tracked: TODO.md §3.0
-- [Phase 2] [Medium] A09 — `requestId` from `res.locals` is not included in BullMQ job payload; worker log entries cannot be correlated back to the originating HTTP request — Tracked: TODO.md §3.0
-- [Phase 2] [Medium] A04 — `express-rate-limit` uses default in-memory store; rate limits are per-process and not shared across instances in multi-process/cloud deployments — Tracked: TODO.md §3.0
-- [Phase 2] [Medium] A01 — No ownership/IDOR check on draft mutation routes; any authenticated Firebase user can PATCH/approve/discard any other user's draft — Tracked: TODO.md §3.0
-- [Phase 2] [Low] A07 — `requireAuth` calls `adminAuth.verifyIdToken(token)` without `checkRevoked: true`; revoked tokens remain valid until expiry (up to 1 hour) — Accepted for now; low operational risk at MVP scale
-- [Phase 2] [Low] A05 — `CORS_ORIGIN` defaults silently to `http://localhost:5173` if env var is absent in production; no startup log warning emitted when default is used — Low risk (safe default, not `*`); note in hardening checklist
-- [Phase 2] [Low] A09 — `worker.on('failed', ...)` handler in `ticketWorker.ts` logs `jobId` and `err` but not `ticketId` from `job.data`; failed-job entries are harder to correlate with DB records — Low; fix in Phase 3 worker iteration
-- [Phase 3+4] [Critical] A01 — No Firestore security rules deployed; `drafts/{id}` collection open to unauthenticated client writes via the public Firebase config embedded in the Vite bundle — Fixed: `firestore.rules` created at repo root; `drafts/{id}` allows authenticated reads only, all writes denied to clients (`allow write: if false`)
-- [Phase 3+4] [High] A10 — SSRF in `publishWorker.ts`: `KB_PUBLISH_URL` validated only as a syntactically valid URL (`z.string().url()`); `http://169.254.169.254`, `http://localhost`, internal Docker IPs all accepted — Fixed: `isSafePublishUrl()` helper added; blocks private/loopback IPv4 ranges, link-local, cloud metadata hostnames, non-http(s) schemes; requires https in production
-- [Phase 3+4] [High] A03/A01 — Unvalidated `publishedUrl` from KB response body stored to DB and rendered as `<a href>` in `DraftDetail.tsx`; a compromised KB endpoint could inject `javascript:` or `data:` URIs — Fixed: `isSafePublishUrl()` also validates the candidate `publishedUrl` before persistence in `publishWorker.ts`
-- [Phase 3+4] [High] LLM01/A03 — Prompt injection: ticket `subject` and `transcript` embedded verbatim in GPT-4o prompt with no sanitization; adversarial ticket content could override system instructions or produce malicious KB articles — Fixed: `sanitizeTicketField()` in `kb-draft.ts` strips null bytes, hard-truncates, escapes markdown heading markers to fullwidth Unicode, and encodes triple-backtick delimiters; system prompt updated with explicit data-boundary markers and anti-injection instruction
-- [Phase 3+4] [High] A01 — IDOR on approve/discard routes: any authenticated Firebase user could approve/discard any draft regardless of authorship — Fixed: `requireAdmin` middleware added to `auth.ts`; applied to `POST /api/v1/drafts/:id/approve` and `POST /api/v1/drafts/:id/discard`; checks `admin: true` Firebase custom claim; 2 new test cases added
-- [Phase 3+4] [Medium] A10 — `OPENAI_API_KEY` still absent from `StartupEnvSchema`; process boots without it and only fails at first LLM call — Tracked: TODO.md §5.0
-- [Phase 3+4] [Medium] A05 — `SYNTHESIS_MODEL` and `EMBEDDING_MODEL` env vars read without Zod validation; any string passes to OpenAI API — Tracked: TODO.md §5.0
-- [Phase 3+4] [Medium] A04 — `publishQueue` has no `defaultJobOptions` with retry count/backoff; transient KB failures produce permanent job failure — Tracked: TODO.md §5.0
-- [Phase 3+4] [Medium] A05 — `firestore.rules` file exists but must be deployed; no CI enforcement — Tracked: TODO.md §5.0
-- [Phase 3+4] [Medium] A03 — `draft.publishedUrl` rendered as `<a href>` in `DraftDetail.tsx` with no client-side URL validation; defence-in-depth gap — Tracked: TODO.md §5.0
-- [Phase 3+4] [Low] A07 — `useFirestoreDraft` subscribes without checking auth state; harmless with correct Firestore rules but would expose data in test-mode misconfiguration — Low risk; mitigated by Firestore rules fix
-- [Phase 3+4] [Low] A08 — No structural validation of GPT-4o response before persisting as Draft; empty or malformed model output creates a low-quality draft — Low operational risk; graceful fallback to 'Untitled KB Article' is present
-- [Phase 3+4] [Low] A09 — Worker `failed` handlers in synthesisWorker, publishWorker, embeddingWorker, clusteringWorker log only BullMQ jobId, not the domain entity ID (clusterId/draftId/ticketId) — Low; tracked for Phase 5 logging pass
-- [Phase 5] [Medium] A01 — `requestId.ts` middleware accepts caller-supplied `X-Request-Id` with no maximum length; a caller can send a multi-KB header value which is echoed verbatim into Pino structured log output and relayed on the response, enabling log-line injection and oversized response headers — Tracked: TODO.md §5.1
-- [Phase 5] [Medium] A03 — `DraftDetail.tsx` renders `draft.publishedUrl` directly as `<a href>` with `rel="noopener noreferrer"` but no client-side URL scheme validation; a stale DB record that bypassed server-side isSafePublishUrl (e.g. written before the SSRF fix) would be rendered as a clickable link with no client-side defence — Tracked: TODO.md §5.1
-- [Phase 5] [Low] A06 — `pipeline.spec.ts` E2E helper sends `X-Webhook-Secret` header but the webhook route checks `X-Webhook-Signature: sha256=<hex>`; all pipeline tests are `.fixme` so this is not a runtime security gap, but the tests will fail when staging infrastructure becomes available — Tracked: TODO.md §5.1
-- [Phase 5] [Low] A09 — `requestId` propagation through workers is complete in Phase 5: all five workers (ticketWorker, embeddingWorker, clusteringWorker, synthesisWorker, publishWorker) propagate `requestId` from job data into every Pino log call and the `failed` handler; Phase 3+4 Low finding resolved
+### Open — Infrastructure (cannot be fixed in code alone)
+
+- [Phase 2] [Medium] A02 — Redis has no authentication configured in `docker-compose.yml`; any process on the Docker network can read/write/delete queued jobs — Open: requires `requirepass` in `docker-compose.yml` + `REDIS_PASSWORD` in production env; `queue.ts` already passes the password when the env var is set
+- [Phase 2] [Medium] A04 — `express-rate-limit` used default in-memory store across sessions; rate limits were per-process — Fixed in Phase 9: `RedisStore` from `rate-limit-redis` is now used for both the webhook and API limiters in `index.ts`; falls back to in-memory if Redis is unreachable. Residual: Redis itself still requires password configuration (see above)
+- [Phase 3+4] [Medium] A05 — `firestore.rules` file exists at repo root but must be deployed via `firebase deploy --only firestore:rules`; no CI step enforces deployment — Open: infrastructure/CI task; `firestore.rules` content is correct
+- [Phase 5] [Low] A06 — `pipeline.spec.ts` E2E helper sends `X-Webhook-Secret` header but the route checks `X-Webhook-Signature: sha256=<hex>`; all pipeline tests are `.fixme` so this is not a runtime gap, but tests will fail when staging infrastructure becomes available — Open: update test helper when E2E environment is provisioned
+
+### Open — Low Accepted Risks
+
+- [Phase 2] [Low] A07 — `requireAuth` calls `adminAuth.verifyIdToken(token)` without `checkRevoked: true`; revoked tokens remain valid until expiry (up to 1 hour) — Accepted: low operational risk at MVP scale; revisit before enterprise launch
+- [Phase 2] [Low] A05 — `CORS_ORIGIN` defaults silently to `http://localhost:5173` if env var is absent in production — Accepted: safe default (not `*`); document in production deployment checklist
+- [Phase 7] [Low] A10 — `formatRelative()` returns `"NaN weeks ago"` for invalid date strings; cosmetic only; `draft.createdAt` is a Prisma `DateTime` preventing invalid DB values — Accepted
+- [Phase 7] [Low] A03 — `<ReactMarkdown>` default `<a>` renderer does not add `rel="noopener noreferrer"`; links open in same tab (no `target="_blank"`), so reverse tabnapping is not possible without a component override — Accepted
+- [Phase 8+9] [Low] A07 — `useFirestoreDraft` subscribes without checking auth state first; harmless with correct Firestore rules, but would expose data in test-mode misconfiguration — Accepted: mitigated by deployed `firestore.rules`
+
+### Recently Fixed (this session)
+
+- [Phase 1+5] [Medium] A01 — `requestId.ts` accepted caller-supplied `X-Request-Id` up to 128 chars with no control-character filtering; newline/carriage-return characters could forge log lines and inject response headers — Fixed: limit reduced to 64 chars; `\r`/`\n` characters cause the value to be discarded and a fresh UUID generated; 2 new test cases added in `requestId.test.ts`
+- [Phase 3+4] [Medium] A05 — `SYNTHESIS_MODEL` and `EMBEDDING_MODEL` env vars read without Zod validation; any string passed to OpenAI API — Fixed: both added to `StartupEnvSchema` in `index.ts` with `.default('gpt-4o')` / `.default('text-embedding-3-small')`; process exits at startup if explicitly set to empty string
+- [Phase 9] [High] A01/A08 — `PatchOrgSchema.logoUrl` accepted any valid URL syntax (no domain restriction); an org admin could store an arbitrary third-party URL as the org logo, causing referrer leakage to that host and creating a latent SSRF risk if a server-side image proxy is ever added — Fixed: `isSafeLogoUrl()` helper added in `org.ts`; only `firebasestorage.googleapis.com`, `storage.googleapis.com`, and `*.firebasestorage.app` accepted; test updated to use a Firebase Storage URL; new rejection test added
+- [Phase 9] [High] A05 — `uploadOrgLogo.ts` derived the Storage path extension from the attacker-controlled `file.name` (e.g. `file.name = "exploit.svg"` → path `org-logos/{id}/logo.svg`); SVG files served by Firebase Storage with `Content-Type: image/svg+xml` can execute `<script>` tags when opened directly via download URL — Fixed: extension now derived from a server-side `ALLOWED_TYPES` map keyed on `file.type` (validated against `image/png|jpeg|webp|gif`); `file.name` is never used in path construction; unsupported types throw before any upload
+- [Phase 9] [High] A01/Privacy — All `<img>` tags rendering `logoUrl` in `AppLayout.tsx` (3 instances) and `ManageTeamsTab.tsx` (2 instances) lacked `referrerPolicy="no-referrer"`; browsers would send the full app URL as `Referer` to the image host — Fixed: `referrerPolicy="no-referrer"` added to all 5 img elements
+- [Phase 9] [Critical] A02 — No `storage.rules` file existed in the repo; Firebase Storage had no explicit security rules, defaulting to project-level defaults which may allow unauthenticated or cross-tenant writes — Fixed: `storage.rules` created at repo root; authenticated reads allowed on `org-logos/{orgId}/{filename}`; writes restricted to authenticated users with `size <= 2 MB` and `contentType` matching `image/(png|jpeg|webp|gif)`; all other paths denied
+
+### Open — Logo Upload Feature (Medium — infrastructure)
+
+- [Phase 9] [Medium] A02 — `storage.rules` exists in repo but must be deployed via `firebase deploy --only storage`; no CI step enforces deployment — Open: infrastructure/CI task
+- [Phase 9] [Medium] A05 — Firebase Storage rules allow any authenticated user to write to `org-logos/{orgId}/` for any orgId; the backend `PATCH /org/:orgId` admin-membership check prevents the URL from being persisted to DB, but the Storage object itself can be overwritten by any authenticated user without being an org admin — Open: Storage rules `request.auth.uid` cannot easily check DB membership; mitigated by the DB-layer admin check; tracked for future Cloud Functions or custom token claim approach

@@ -13,6 +13,10 @@ const StartupEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
   // A10 — fail-fast at startup rather than at first embedding/synthesis call.
   OPENAI_API_KEY: z.string().min(1),
+  // A05 — Model names validated at startup with safe defaults so an empty or
+  // missing var never silently passes an arbitrary string to the OpenAI API.
+  SYNTHESIS_MODEL: z.string().min(1).default('gpt-4o'),
+  EMBEDDING_MODEL: z.string().min(1).default('text-embedding-3-small'),
   // KB_PUBLISH_URL is optional (omit to disable publishing in local dev).
   KB_PUBLISH_URL: z.string().url().optional(),
 })

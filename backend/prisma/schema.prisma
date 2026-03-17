@@ -26,6 +26,18 @@ enum DraftStatus {
   DISCARDED
 }
 
+enum DraftEventAction {
+  CREATED
+  APPROVED
+  DISCARDED
+  EDITED
+}
+
+enum MemberRole {
+  ADMIN
+  MEMBER
+}
+
 model User {
   id        String   @id @default(uuid()) @db.Uuid
   firebaseUid String  @unique
@@ -59,13 +71,64 @@ model Cluster {
 }
 
 model Draft {
-  id           String      @id @default(uuid()) @db.Uuid
+  id           String        @id @default(uuid()) @db.Uuid
   title        String
-  content      String      @db.Text
-  status       DraftStatus @default(PENDING_REVIEW)
-  clusterId    String      @db.Uuid
-  cluster      Cluster     @relation(fields: [clusterId], references: [id])
+  content      String        @db.Text
+  status       DraftStatus   @default(PENDING_REVIEW)
+  clusterId    String        @db.Uuid
+  cluster      Cluster       @relation(fields: [clusterId], references: [id])
   publishedUrl String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  events       DraftEvent[]
+  orgId        String?       @db.Uuid
+  org          Organization? @relation(fields: [orgId], references: [id])
+}
+
+model DraftEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  draftId   String   @db.Uuid
+  draft     Draft    @relation(fields: [draftId], references: [id])
+  action    DraftEventAction
+  userId    String
+  userEmail String
+  timestamp DateTime @default(now())
+  orgId     String?  @db.Uuid
+}
+
+model Organization {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  slug       String   @unique
+  logoUrl    String?
+  createdAt  DateTime @default(now())
+
+  members  OrganizationMember[]
+  settings OrganizationSettings?
+  drafts   Draft[]
+}
+
+model OrganizationMember {
+  id        String     @id @default(uuid()) @db.Uuid
+  orgId     String     @db.Uuid
+  org       Organization @relation(fields: [orgId], references: [id])
+  userId    String?
+  userEmail String
+  role      MemberRole @default(MEMBER)
+  joinedAt  DateTime   @default(now())
+
+  @@unique([orgId, userEmail])
+}
+
+model OrganizationSettings {
+  id               String       @id @default(uuid()) @db.Uuid
+  orgId            String       @unique @db.Uuid
+  org              Organization @relation(fields: [orgId], references: [id])
+  zendeskSubdomain String?
+  zendeskApiKey    String?
+  intercomToken    String?
+  kbPublishUrl     String?
+  clusterThreshold Float        @default(0.65)
+  minClusterSize   Int          @default(5)
+  updatedAt        DateTime     @updatedAt
 }
