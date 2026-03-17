@@ -133,6 +133,34 @@ describe('DraftDetail', () => {
     expect(link).toHaveAttribute('href', 'https://kb.example.com/articles/1')
   })
 
+  it('does not render published URL link for non-https URLs', () => {
+    mockUseDraft.mockReturnValue({
+      data: {
+        ...baseDraft,
+        status: 'APPROVED',
+        publishedUrl: 'http://kb.example.com/articles/1',
+      },
+      isLoading: false,
+      isError: false,
+    })
+    renderDraftDetail()
+    expect(screen.queryByRole('link', { name: /view published article/i })).not.toBeInTheDocument()
+  })
+
+  it('does not render published URL link for javascript: URLs', () => {
+    mockUseDraft.mockReturnValue({
+      data: {
+        ...baseDraft,
+        status: 'APPROVED',
+        publishedUrl: 'javascript:alert(1)',
+      },
+      isLoading: false,
+      isError: false,
+    })
+    renderDraftDetail()
+    expect(screen.queryByRole('link', { name: /view published article/i })).not.toBeInTheDocument()
+  })
+
   it('shows Live badge when Firestore connection is active', async () => {
     const { useFirestoreDraft } = await import('@/hooks/useFirestoreDraft')
     vi.mocked(useFirestoreDraft).mockReturnValue({ firestoreData: null, isLive: true })

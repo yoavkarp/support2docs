@@ -62,7 +62,7 @@ draftsRouter.get('/', async (req, res, next) => {
       take: limit,
     })
 
-    res.json({ data: drafts, page, limit })
+    res.json(drafts)
   } catch (err) {
     next(err)
   }
@@ -102,8 +102,10 @@ draftsRouter.get('/:id', async (req, res, next) => {
 
 // ---------------------------------------------------------------------------
 // 4.2 — PATCH /drafts/:id — save edits; sync to Firestore for real-time UI
+// A01 — requireAdmin: edit access is restricted to admins to prevent any
+// authenticated user from mutating any draft (IDOR / broken access control).
 // ---------------------------------------------------------------------------
-draftsRouter.patch('/:id', async (req, res, next) => {
+draftsRouter.patch('/:id', requireAdmin, async (req, res, next) => {
   try {
     const paramParsed = DraftIdParamSchema.safeParse(req.params)
     if (!paramParsed.success) {

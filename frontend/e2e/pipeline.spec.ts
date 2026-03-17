@@ -11,25 +11,37 @@
  */
 
 import { test, expect } from '@playwright/test'
+import crypto from 'crypto'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const BACKEND_URL = process.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const BACKEND_URL = process.env.VITE_API_BASE_URL ?? 'http://localhost:3001'
 const WEBHOOK_PATH = '/api/v1/webhooks/ticket-closed'
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET ?? 'test-secret'
+
+/**
+ * Compute a valid HMAC-SHA256 signature header for a JSON body string.
+ * The webhook route expects: X-Webhook-Signature: sha256=<hex>
+ */
+function makeWebhookHeaders(body: string, secret: string): Record<string, string> {
+  const sig = crypto.createHmac('sha256', secret).update(body).digest('hex')
+  return {
+    'Content-Type': 'application/json',
+    'X-Webhook-Signature': `sha256=${sig}`,
+  }
+}
 
 /** Build a minimal Zendesk-style closed-ticket payload. */
 function makeTicketPayload(overrides: Record<string, unknown> = {}) {
   return {
     id: `ext-ticket-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     subject: 'User cannot log in after password reset',
-    description:
+    transcript:
       'The user reports being unable to log in after resetting their password. ' +
       'Clearing the browser cache and retrying resolved the issue.',
     source: 'zendesk',
-    closedAt: new Date().toISOString(),
     ...overrides,
   }
 }
@@ -60,16 +72,13 @@ test.describe('Full pipeline smoke test', () => {
       })
       ticketIds.push(payload.id)
 
+      const body = JSON.stringify(payload)
       const res = await request.post(`${BACKEND_URL}${WEBHOOK_PATH}`, {
         data: payload,
-        headers: {
-          'Content-Type': 'application/json',
-          // In a real staging test the HMAC would be computed here.
-          'X-Webhook-Secret': WEBHOOK_SECRET,
-        },
+        headers: makeWebhookHeaders(body, WEBHOOK_SECRET),
       })
 
-      expect(res.status()).toBe(200)
+      expect(res.status()).toBe(201)
     }
 
     // -----------------------------------------------------------------------
@@ -84,8 +93,8 @@ test.describe('Full pipeline smoke test', () => {
       const res = await request.get(`${BACKEND_URL}/api/v1/drafts?status=PENDING_REVIEW`)
       const body = await res.json()
 
-      if (body.data && body.data.length > 0) {
-        draftId = body.data[0].id
+      if (Array.isArray(body) && body.length > 0) {
+        draftId = body[0].id
         break
       }
 
@@ -130,29 +139,24 @@ test.describe('Full pipeline smoke test', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Webhook idempotency', () => {
-  test.fixme(
-    true,
-    'Requires running backend with PostgreSQL. ' +
-      'Run in staging with VITE_API_BASE_URL and WEBHOOK_SECRET set.',
-  )
-
   test('duplicate ticket ingestion returns 200 with the existing ticket id', async ({
     request,
   }) => {
-    const payload = makeTicketPayload({ id: 'idempotency-test-ticket-001' })
+    const payload = makeTicketPayload({ id: `idempotency-test-${Date.now()}` })
+    const serialisedPayload = JSON.stringify(payload)
 
-    // First ingestion
+    // First ingestion — new ticket, returns 201
     const first = await request.post(`${BACKEND_URL}${WEBHOOK_PATH}`, {
       data: payload,
-      headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': WEBHOOK_SECRET },
+      headers: makeWebhookHeaders(serialisedPayload, WEBHOOK_SECRET),
     })
-    expect(first.status()).toBe(200)
+    expect(first.status()).toBe(201)
     const firstBody = await first.json()
 
-    // Second ingestion of the same external ID
+    // Second ingestion of the same external ID — duplicate, returns 200
     const second = await request.post(`${BACKEND_URL}${WEBHOOK_PATH}`, {
       data: payload,
-      headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': WEBHOOK_SECRET },
+      headers: makeWebhookHeaders(serialisedPayload, WEBHOOK_SECRET),
     })
     expect(second.status()).toBe(200)
     const secondBody = await second.json()
@@ -167,21 +171,13 @@ test.describe('Webhook idempotency', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Webhook security', () => {
-  test.fixme(
-    true,
-    'Requires running backend. ' +
-      'Run in staging with VITE_API_BASE_URL and WEBHOOK_SECRET set.',
-  )
-
   test('webhook request with invalid signature returns 401', async ({ request }) => {
     const payload = makeTicketPayload()
 
+    const body = JSON.stringify(payload)
     const res = await request.post(`${BACKEND_URL}${WEBHOOK_PATH}`, {
       data: payload,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Webhook-Secret': 'definitely-wrong-secret',
-      },
+      headers: makeWebhookHeaders(body, 'definitely-wrong-secret'),
     })
 
     expect(res.status()).toBe(401)

@@ -8,12 +8,23 @@ import { clusteringQueue } from '../lib/queue.js'
 const RedisEnvSchema = z.object({
   REDIS_HOST: z.string().min(1).default('localhost'),
   REDIS_PORT: z.coerce.number().int().min(1).max(65535).default(6379),
+  REDIS_PASSWORD: z.string().optional(),
 })
 
 const JobDataSchema = z.object({
   ticketId: z.string().uuid(),
   requestId: z.string().optional(),
 })
+
+// A05 — Whitelist of valid OpenAI embedding model identifiers.
+// Any other string (typo, injection) is rejected at worker startup, not silently
+// passed to the OpenAI API where it would either fail with an opaque error or
+// (if a new model is added without review) use an unintended model.
+const ALLOWED_EMBEDDING_MODELS = ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'] as const
+const embeddingModel = z
+  .enum(ALLOWED_EMBEDDING_MODELS)
+  .default('text-embedding-3-small')
+  .parse(process.env['EMBEDDING_MODEL'])
 
 /**
  * Creates and starts the embedding-processing BullMQ worker.
@@ -38,7 +49,7 @@ export function startEmbeddingWorker(): Worker {
       const ticket = await prisma.ticket.findUniqueOrThrow({ where: { id: ticketId } })
 
       const response = await openai.embeddings.create({
-        model: process.env['EMBEDDING_MODEL'] ?? 'text-embedding-3-small',
+        model: embeddingModel,
         input: ticket.transcript,
       })
 
@@ -59,7 +70,10 @@ export function startEmbeddingWorker(): Worker {
       connection: {
         host: redisEnv.REDIS_HOST,
         port: redisEnv.REDIS_PORT,
+        ...(redisEnv.REDIS_PASSWORD !== undefined && { password: redisEnv.REDIS_PASSWORD }),
       },
+      concurrency: 1,
+      limiter: { max: 1, duration: 2000 },
     }
   )
 

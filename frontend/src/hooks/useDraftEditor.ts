@@ -27,6 +27,15 @@ export function useDraftEditor({
   const { mutate: updateDraft, isPending: isSaving } = useUpdateDraft()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Populate fields once the draft data loads from the API
+  useEffect(() => {
+    if (initialTitle) setTitle(initialTitle)
+  }, [initialTitle])
+
+  useEffect(() => {
+    if (initialContent) setContent(initialContent)
+  }, [initialContent])
+
   // Sync Firestore real-time updates when another user edits
   useEffect(() => {
     if (firestoreTitle !== undefined && firestoreTitle !== title) {

@@ -66,9 +66,26 @@ describe('requestIdMiddleware', () => {
     expect(next).toHaveBeenCalledOnce()
   })
 
-  it('generates a new uuid v4 when X-Request-Id header is an array (multi-value)', () => {
-    // Express exposes multi-value headers as arrays; the middleware should treat this as missing
+  it('uses the first element when X-Request-Id header is an array (multi-value)', () => {
+    // A01 — when the header arrives as a multi-value array, use the first element
+    // if it is non-empty and within the 128-char limit (prevents log-forging).
     const req = { headers: { 'x-request-id': ['id-a', 'id-b'] } } as unknown as Request
+    const res = makeRes()
+    const next = vi.fn() as NextFunction
+
+    requestIdMiddleware(req, res, next)
+
+    // uuid generator should NOT be called — 'id-a' is valid
+    expect(uuidv4).not.toHaveBeenCalled()
+    expect(res.locals['requestId']).toBe('id-a')
+    expect(res.setHeader).toHaveBeenCalledWith('X-Request-Id', 'id-a')
+    expect(next).toHaveBeenCalledOnce()
+  })
+
+  it('generates a new uuid v4 when X-Request-Id header is an array whose first element is too long', () => {
+    // A01 — oversized IDs (>128 chars) must be regenerated to prevent log-line injection.
+    const longId = 'x'.repeat(129)
+    const req = { headers: { 'x-request-id': [longId, 'id-b'] } } as unknown as Request
     const res = makeRes()
     const next = vi.fn() as NextFunction
 
@@ -76,6 +93,33 @@ describe('requestIdMiddleware', () => {
 
     expect(uuidv4).toHaveBeenCalledOnce()
     expect(res.locals['requestId']).toBe('generated-uuid-v4')
+    expect(next).toHaveBeenCalledOnce()
+  })
+
+  it('generates a new uuid v4 when X-Request-Id header exceeds 128 characters', () => {
+    // A01 — oversized IDs must be regenerated to prevent log-line injection.
+    const longId = 'a'.repeat(129)
+    const req = { headers: { 'x-request-id': longId } } as unknown as Request
+    const res = makeRes()
+    const next = vi.fn() as NextFunction
+
+    requestIdMiddleware(req, res, next)
+
+    expect(uuidv4).toHaveBeenCalledOnce()
+    expect(res.locals['requestId']).toBe('generated-uuid-v4')
+    expect(next).toHaveBeenCalledOnce()
+  })
+
+  it('accepts an X-Request-Id header that is exactly 128 characters', () => {
+    const exactId = 'b'.repeat(128)
+    const req = { headers: { 'x-request-id': exactId } } as unknown as Request
+    const res = makeRes()
+    const next = vi.fn() as NextFunction
+
+    requestIdMiddleware(req, res, next)
+
+    expect(uuidv4).not.toHaveBeenCalled()
+    expect(res.locals['requestId']).toBe(exactId)
     expect(next).toHaveBeenCalledOnce()
   })
 

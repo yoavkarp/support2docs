@@ -109,7 +109,6 @@ describe('POST /webhooks/ticket-closed', () => {
       source: 'zendesk',
       subject: 'Cannot login',
       transcript: 'User: help\nAgent: sure',
-      embedding: null,
       status: 'PENDING',
       clusterId: null,
       createdAt: new Date(),
@@ -131,7 +130,6 @@ describe('POST /webhooks/ticket-closed', () => {
       source: 'zendesk',
       subject: 'Cannot login',
       transcript: 'User: help\nAgent: sure',
-      embedding: null,
       status: 'PENDING',
       clusterId: null,
       createdAt: new Date(),
@@ -157,7 +155,6 @@ describe('POST /webhooks/ticket-closed', () => {
       source: 'zendesk',
       subject: 'Cannot login',
       transcript: 'User: help\nAgent: sure',
-      embedding: null,
       status: 'PENDING',
       clusterId: null,
       createdAt: new Date(),
@@ -172,7 +169,7 @@ describe('POST /webhooks/ticket-closed', () => {
 
     expect(res.status).toBe(201)
     expect(ticketQueue.add).toHaveBeenCalledOnce()
-    expect(ticketQueue.add).toHaveBeenCalledWith('process-ticket', { ticketId: createdId })
+    expect(ticketQueue.add).toHaveBeenCalledWith('process-ticket', expect.objectContaining({ ticketId: createdId }))
   })
 
   it('does NOT enqueue when the ticket is a duplicate (existing sourceId)', async () => {
@@ -182,7 +179,6 @@ describe('POST /webhooks/ticket-closed', () => {
       source: 'zendesk',
       subject: 'Cannot login',
       transcript: 'User: help\nAgent: sure',
-      embedding: null,
       status: 'PENDING',
       clusterId: null,
       createdAt: new Date(),
@@ -223,7 +219,6 @@ describe('POST /webhooks/ticket-closed', () => {
       source: 'intercom',
       subject: 'Payment fails',
       transcript: 'User: I cannot pay\nAgent: let me check',
-      embedding: null,
       status: 'PENDING',
       clusterId: null,
       createdAt: new Date(),
@@ -236,6 +231,6 @@ describe('POST /webhooks/ticket-closed', () => {
       .set('x-webhook-signature', sign(differentPayload))
       .send(differentPayload)
 
-    expect(ticketQueue.add).toHaveBeenCalledWith('process-ticket', { ticketId: returnedId })
+    expect(ticketQueue.add).toHaveBeenCalledWith('process-ticket', expect.objectContaining({ ticketId: returnedId }))
   })
 })

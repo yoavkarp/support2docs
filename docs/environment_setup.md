@@ -173,6 +173,18 @@ Configure the same value in your ticket platform's webhook settings as the signi
 
 ---
 
+## Firebase Security Rules
+
+After cloning, deploy Firestore rules before going to production:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+The rules file is at `firestore.rules` in the project root.
+
+---
+
 ## Quick-Start Checklist
 
 ```

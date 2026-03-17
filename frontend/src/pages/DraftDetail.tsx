@@ -9,6 +9,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 
+function isSafeUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function DetailSkeleton() {
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Loading draft">
@@ -113,7 +122,7 @@ export default function DraftDetail() {
           />
         </div>
 
-        {draft.publishedUrl && (
+        {draft.publishedUrl && isSafeUrl(draft.publishedUrl) && (
           <a
             href={draft.publishedUrl}
             target="_blank"

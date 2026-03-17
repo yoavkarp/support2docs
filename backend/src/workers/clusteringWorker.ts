@@ -8,6 +8,7 @@ import { synthesisQueue } from '../lib/queue.js'
 const RedisEnvSchema = z.object({
   REDIS_HOST: z.string().min(1).default('localhost'),
   REDIS_PORT: z.coerce.number().int().min(1).max(65535).default(6379),
+  REDIS_PASSWORD: z.string().optional(),
 })
 
 const ClusteringEnvSchema = z.object({
@@ -158,6 +159,7 @@ export function startClusteringWorker(): Worker {
       connection: {
         host: redisEnv.REDIS_HOST,
         port: redisEnv.REDIS_PORT,
+        ...(redisEnv.REDIS_PASSWORD !== undefined && { password: redisEnv.REDIS_PASSWORD }),
       },
     }
   )

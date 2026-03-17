@@ -14,12 +14,22 @@ interface TicketRecord {
 const RedisEnvSchema = z.object({
   REDIS_HOST: z.string().min(1).default('localhost'),
   REDIS_PORT: z.coerce.number().int().min(1).max(65535).default(6379),
+  REDIS_PASSWORD: z.string().optional(),
 })
 
 const JobDataSchema = z.object({
   clusterId: z.string().uuid(),
   requestId: z.string().optional(),
 })
+
+// A05 — Whitelist of valid OpenAI synthesis model identifiers.
+// Any other string (typo, injection) is rejected at worker startup rather than
+// silently passed to the OpenAI API.
+const ALLOWED_SYNTHESIS_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] as const
+const synthesisModel = z
+  .enum(ALLOWED_SYNTHESIS_MODELS)
+  .default('gpt-4o')
+  .parse(process.env['SYNTHESIS_MODEL'])
 
 /**
  * Creates and starts the synthesis BullMQ worker.
@@ -64,7 +74,7 @@ export function startSynthesisWorker(): Worker {
 
       // 4. Call OpenAI GPT-4o
       const completion = await openai.chat.completions.create({
-        model: process.env['SYNTHESIS_MODEL'] ?? 'gpt-4o',
+        model: synthesisModel,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
       })
@@ -93,6 +103,7 @@ export function startSynthesisWorker(): Worker {
       connection: {
         host: redisEnv.REDIS_HOST,
         port: redisEnv.REDIS_PORT,
+        ...(redisEnv.REDIS_PASSWORD !== undefined && { password: redisEnv.REDIS_PASSWORD }),
       },
     }
   )
