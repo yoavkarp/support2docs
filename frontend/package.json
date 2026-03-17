@@ -2,6 +2,16 @@
   "name": "@support2docs/frontend",
   "private": true,
   "version": "0.0.1",
+  "//pinned": {
+    "react": "Held at v18 — React 19 changes JSX transform; upgrade when shadcn/ui ecosystem catches up",
+    "@types/react": "Held at v18 — matches react v18 peer",
+    "@types/react-dom": "Held at v18 — matches react-dom v18 peer",
+    "react-router-dom": "Held at v6 — v7 is Remix-based; requires full migration spike",
+    "firebase": "Held at v11 — v12 changes auth API; upgrade in dedicated spike",
+    "tailwind-merge": "Held at v2 — v3 changes merge logic; verify no visual regressions before upgrading",
+    "uuid": "Held at v10 — v11+ changes export shape; upgrade with backend in sync",
+    "jsdom": "Held at v24 — v25+ drops Node 18 support used in CI"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,6 +23,9 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@radix-ui/react-alert-dialog": "^1.1.15",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-query": "^5.40.0",
     "@tanstack/react-query-devtools": "^5.40.0",
     "class-variance-authority": "^0.7.0",

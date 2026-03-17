@@ -23,6 +23,19 @@ describe('ProtectedRoute', () => {
     expect(screen.queryByText('Protected content')).not.toBeInTheDocument()
   })
 
+  it('loading container has role="status" and aria-label for screen readers', () => {
+    vi.mocked(useAuth).mockReturnValue({ user: null, loading: true })
+    render(
+      <MemoryRouter>
+        <ProtectedRoute>
+          <div>Protected content</div>
+        </ProtectedRoute>
+      </MemoryRouter>
+    )
+    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(screen.getByLabelText('Authenticating')).toBeInTheDocument()
+  })
+
   it('redirects to /login when user is not authenticated', () => {
     vi.mocked(useAuth).mockReturnValue({ user: null, loading: false })
     render(

@@ -3,14 +3,19 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { prisma } from '../../lib/prisma.js'
+import { ticketQueue } from '../../lib/queue.js'
 
 export const webhooksRouter = Router()
 
+// A05 — All external fields are bounded to prevent storage-amplification attacks.
+// The global 50kb body-size limit provides a first layer of defence; these
+// per-field max() constraints are the second layer and match what the DB schema
+// can reasonably store.
 const TicketClosedPayloadSchema = z.object({
-  id: z.string(),
-  source: z.string(),
-  subject: z.string(),
-  transcript: z.string(),
+  id: z.string().min(1).max(255),
+  source: z.string().min(1).max(100),
+  subject: z.string().min(1).max(500),
+  transcript: z.string().min(1).max(40_000),
 })
 
 /**
@@ -68,7 +73,10 @@ webhooksRouter.post('/ticket-closed', async (req, res, next) => {
       data: { id: uuidv4(), sourceId, source, subject, transcript },
     })
 
-    // TODO: enqueue ticket.id for processing (Phase 2.2)
+    await ticketQueue.add('process-ticket', {
+      ticketId: ticket.id,
+      requestId: res.locals['requestId'] as string | undefined,
+    })
 
     res.status(201).json({ id: ticket.id })
   } catch (err) {

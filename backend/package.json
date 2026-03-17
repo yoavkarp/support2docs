@@ -6,14 +6,14 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node --env-file=.env dist/index.js",
     "lint": "eslint .",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "db:generate": "prisma generate",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx --env-file=.env prisma/seed.ts"
   },
   "//pinned": {
     "firebase-admin": "Held at ^12.x (latest). 8 low-severity audit warnings in transitive deps (@google-cloud/storage → teeny-request → @tootallnate/once). npm audit --force fix would downgrade to v10 — a breaking change. Accepted risk: low severity, server-side only, not exploitable via user input. Revisit when firebase-admin ships a patch."
@@ -22,7 +22,9 @@
     "@prisma/client": "^5.16.0",
     "bullmq": "^5.8.0",
     "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
     "express": "^4.19.2",
+    "express-rate-limit": "^8.3.1",
     "firebase-admin": "^12.2.0",
     "helmet": "^7.1.0",
     "openai": "^4.52.0",

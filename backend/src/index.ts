@@ -1,20 +1,58 @@
+import 'dotenv/config'
+import { z } from 'zod'
+import { logger } from './lib/logger.js'
+
+// ---------------------------------------------------------------------------
+// 2.0 — Startup env validation: fail fast before anything else loads.
+// ---------------------------------------------------------------------------
+const StartupEnvSchema = z.object({
+  FIREBASE_PROJECT_ID: z.string().min(1),
+  FIREBASE_CLIENT_EMAIL: z.string().min(1),
+  FIREBASE_PRIVATE_KEY: z.string().min(1),
+  WEBHOOK_SECRET: z.string().min(1),
+  DATABASE_URL: z.string().min(1),
+})
+
+const startupEnvResult = StartupEnvSchema.safeParse(process.env)
+if (!startupEnvResult.success) {
+  logger.error(
+    { details: startupEnvResult.error.flatten() },
+    'Missing or empty required environment variables — shutting down'
+  )
+  process.exit(1)
+}
+
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import { pinoHttp } from 'pino-http'
-import { logger } from './lib/logger.js'
+import { rateLimit } from 'express-rate-limit'
 import { v1Router } from './routes/v1/index.js'
 import { errorHandler } from './middleware/errorHandler.js'
+import { requestIdMiddleware } from './middleware/requestId.js'
+import { startTicketWorker } from './workers/ticketWorker.js'
+import { startEmbeddingWorker } from './workers/embeddingWorker.js'
+import { startClusteringWorker } from './workers/clusteringWorker.js'
+import { startSynthesisWorker } from './workers/synthesisWorker.js'
+import { startPublishWorker } from './workers/publishWorker.js'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
 
+// ---------------------------------------------------------------------------
+// Core middleware
+// ---------------------------------------------------------------------------
 app.use(helmet())
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? 'http://localhost:5173' }))
+
+// 2.0 — X-Request-Id propagation (A09): must come before routes and logging.
+app.use(requestIdMiddleware)
+
+// 2.0 — Body size: reduced from 200kb to 50kb globally.
 // Capture raw body buffer for webhook HMAC verification (A08) before JSON parsing.
 app.use(
   express.json({
-    limit: '200kb',
+    limit: '50kb',
     verify: (req, _res, buf) => {
       // Attach raw body to the request for HMAC signature verification in the webhook route.
       (req as unknown as { rawBody: Buffer }).rawBody = buf
@@ -23,6 +61,34 @@ app.use(
 )
 app.use(pinoHttp({ logger }))
 
+// ---------------------------------------------------------------------------
+// 2.0 — Rate limiting (A04 / A06)
+// ---------------------------------------------------------------------------
+
+// Webhook endpoint: stricter limit — 100 req/min per IP.
+const webhookRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests — webhook rate limit exceeded' },
+})
+
+// All other /api/v1/* routes: 300 req/min per IP.
+const apiRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests — API rate limit exceeded' },
+})
+
+app.use('/api/v1/webhooks', webhookRateLimiter)
+app.use('/api/v1', apiRateLimiter)
+
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() })
 })
@@ -30,8 +96,19 @@ app.get('/health', (_req, res) => {
 app.use('/api/v1', v1Router)
 app.use(errorHandler)
 
+// ---------------------------------------------------------------------------
+// Server startup
+// ---------------------------------------------------------------------------
 app.listen(PORT, () => {
   logger.info(`Backend listening on port ${PORT}`)
+  // 2.2 — Start the BullMQ ticket-processing worker after the HTTP server is up.
+  startTicketWorker()
+  // 3.x — Start Phase 3 AI pipeline workers.
+  startEmbeddingWorker()
+  startClusteringWorker()
+  startSynthesisWorker()
+  // 4.4 — Start Phase 4 publish worker.
+  startPublishWorker()
 })
 
 export default app
