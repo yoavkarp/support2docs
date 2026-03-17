@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: support2docs
+          POSTGRES_PASSWORD: support2docs
+          POSTGRES_DB: support2docs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://support2docs:support2docs@localhost:5432/support2docs?schema=public
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      NODE_ENV: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (frontend)
+        run: npm run lint --workspace=frontend
+
+      - name: Lint (backend)
+        run: npm run lint --workspace=backend
+
+      - name: Generate Prisma client
+        run: npm run db:generate --workspace=backend
+
+      - name: Run DB migrations
+        run: npm run db:migrate --workspace=backend
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Unit tests — backend (with coverage)
+        run: npm run test:coverage --workspace=backend
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Unit tests — frontend (with coverage)
+        run: npm run test:coverage --workspace=frontend
+
+  e2e:
+    name: E2E Tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Run E2E tests
+        run: npm run test:e2e --workspace=frontend
+        env:
+          NODE_ENV: test

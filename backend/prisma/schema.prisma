@@ -1,0 +1,71 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+enum TicketStatus {
+  PENDING
+  VECTORIZED
+  CLUSTERED
+}
+
+enum ClusterStatus {
+  FORMING
+  READY
+}
+
+enum DraftStatus {
+  PENDING_REVIEW
+  APPROVED
+  DISCARDED
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  firebaseUid String  @unique
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Ticket {
+  id           String       @id @default(uuid()) @db.Uuid
+  sourceId     String       @unique
+  source       String
+  subject      String
+  transcript   String       @db.Text
+  embedding    Unsupported("vector(1536)")?
+  status       TicketStatus @default(PENDING)
+  clusterId    String?      @db.Uuid
+  cluster      Cluster?     @relation(fields: [clusterId], references: [id])
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Cluster {
+  id        String        @id @default(uuid()) @db.Uuid
+  centroid  Unsupported("vector(1536)")?
+  status    ClusterStatus @default(FORMING)
+  tickets   Ticket[]
+  drafts    Draft[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+model Draft {
+  id           String      @id @default(uuid()) @db.Uuid
+  title        String
+  content      String      @db.Text
+  status       DraftStatus @default(PENDING_REVIEW)
+  clusterId    String      @db.Uuid
+  cluster      Cluster     @relation(fields: [clusterId], references: [id])
+  publishedUrl String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
