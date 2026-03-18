@@ -11,7 +11,8 @@
     "lint": "npm run lint --workspaces",
     "test": "npm run test --workspaces",
     "build": "npm run build --workspaces",
-    "firebase:deploy": "firebase deploy"
+    "firebase:deploy": "firebase deploy",
+    "prisma": "npx prisma studio"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
