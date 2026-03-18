@@ -1,11 +1,23 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
-import { DraftEventAction } from '@prisma/client'
+import { DraftEventAction, MemberRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { firestoreDb } from '../../lib/firestore.js'
 import { publishQueue } from '../../lib/queue.js'
-import { requireAdmin } from '../../middleware/auth.js'
+
+async function isOrgAdmin(orgId: string | null | undefined, userId: string): Promise<boolean> {
+  // If orgId is null (legacy draft created before multi-org), check if the user
+  // is an admin of any org — they're the owner by definition.
+  const where = orgId
+    ? { orgId, userId, role: MemberRole.ADMIN }
+    : { userId, role: MemberRole.ADMIN }
+  const membership = await prisma.organizationMember.findFirst({
+    where,
+    select: { id: true },
+  })
+  return membership !== null
+}
 
 export const draftsRouter = Router()
 
@@ -109,7 +121,7 @@ draftsRouter.get('/:id', async (req, res, next) => {
 // A01 — requireAdmin: edit access is restricted to admins to prevent any
 // authenticated user from mutating any draft (IDOR / broken access control).
 // ---------------------------------------------------------------------------
-draftsRouter.patch('/:id', requireAdmin, async (req, res, next) => {
+draftsRouter.patch('/:id', async (req, res, next) => {
   try {
     const paramParsed = DraftIdParamSchema.safeParse(req.params)
     if (!paramParsed.success) {
@@ -119,6 +131,16 @@ draftsRouter.patch('/:id', requireAdmin, async (req, res, next) => {
     const bodyParsed = PatchBodySchema.safeParse(req.body)
     if (!bodyParsed.success) {
       res.status(400).json({ error: 'Invalid request body', details: bodyParsed.error.flatten() })
+      return
+    }
+    const uid = res.locals['uid'] as string
+    const existing = await prisma.draft.findUnique({ where: { id: paramParsed.data.id }, select: { orgId: true } })
+    if (!existing) {
+      res.status(404).json({ error: 'Draft not found' })
+      return
+    }
+    if (!(await isOrgAdmin(existing.orgId, uid))) {
+      res.status(403).json({ error: 'Forbidden — org admin role required' })
       return
     }
     const { title, content } = bodyParsed.data
@@ -161,7 +183,7 @@ draftsRouter.patch('/:id', requireAdmin, async (req, res, next) => {
 // may approve drafts. This prevents any authenticated reviewer from unilaterally
 // publishing another reviewer's draft (IDOR / broken access control).
 // ---------------------------------------------------------------------------
-draftsRouter.post('/:id/approve', requireAdmin, async (req, res, next) => {
+draftsRouter.post('/:id/approve', async (req, res, next) => {
   try {
     const paramParsed = DraftIdParamSchema.safeParse(req.params)
     if (!paramParsed.success) {
@@ -169,10 +191,15 @@ draftsRouter.post('/:id/approve', requireAdmin, async (req, res, next) => {
       return
     }
     const { id } = paramParsed.data
+    const uid = res.locals['uid'] as string
 
     const existing = await prisma.draft.findUnique({ where: { id } })
     if (!existing) {
       res.status(404).json({ error: 'Draft not found' })
+      return
+    }
+    if (!(await isOrgAdmin(existing.orgId, uid))) {
+      res.status(403).json({ error: 'Forbidden — org admin role required' })
       return
     }
     if (existing.status !== 'PENDING_REVIEW') {
@@ -209,7 +236,7 @@ draftsRouter.post('/:id/approve', requireAdmin, async (req, res, next) => {
 // 4.3 — POST /drafts/:id/discard — set DISCARDED
 // A01 — requireAdmin: same rationale as /approve above.
 // ---------------------------------------------------------------------------
-draftsRouter.post('/:id/discard', requireAdmin, async (req, res, next) => {
+draftsRouter.post('/:id/discard', async (req, res, next) => {
   try {
     const paramParsed = DraftIdParamSchema.safeParse(req.params)
     if (!paramParsed.success) {
@@ -217,10 +244,15 @@ draftsRouter.post('/:id/discard', requireAdmin, async (req, res, next) => {
       return
     }
     const { id } = paramParsed.data
+    const uid = res.locals['uid'] as string
 
     const existing = await prisma.draft.findUnique({ where: { id } })
     if (!existing) {
       res.status(404).json({ error: 'Draft not found' })
+      return
+    }
+    if (!(await isOrgAdmin(existing.orgId, uid))) {
+      res.status(403).json({ error: 'Forbidden — org admin role required' })
       return
     }
     if (existing.status !== 'PENDING_REVIEW') {

@@ -10,6 +10,9 @@ vi.mock('../../../lib/prisma.js', () => ({
     draftEvent: {
       create: vi.fn().mockResolvedValue(undefined),
     },
+    organizationMember: {
+      findFirst: vi.fn(),
+    },
   },
 }))
 
@@ -29,24 +32,23 @@ vi.mock('../../../lib/queue.js', () => ({
   },
 }))
 
-// Mock auth middleware so tests are not coupled to Firebase Admin SDK initialisation.
-// requireAuth is not applied in the unit-test app (draftsRouter is mounted directly),
-// so only requireAdmin needs to be stubbed.  By default the stub passes (simulates
-// an authenticated admin user); individual tests can override it to test the 403 path.
-vi.mock('../../../middleware/auth.js', () => ({
-  requireAuth: vi.fn((_req: unknown, _res: unknown, next: () => void) => next()),
-  requireAdmin: vi.fn((_req: unknown, _res: unknown, next: () => void) => next()),
-}))
-
 import express, { type Request, type Response, type NextFunction } from 'express'
 import request from 'supertest'
 import { draftsRouter } from '../drafts.js'
 import { prisma } from '../../../lib/prisma.js'
 import { publishQueue } from '../../../lib/queue.js'
 import { firestoreDb } from '../../../lib/firestore.js'
-import { requireAdmin } from '../../../middleware/auth.js'
+
+const ORG_ID = 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e'
+const DRAFT_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'
+const ADMIN_MEMBER = { id: 'member-id' }
 
 const app = express()
+// Inject uid into res.locals to simulate requireAuth upstream
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.locals['uid'] = 'test-uid'
+  next()
+})
 app.use(express.json())
 app.use('/drafts', draftsRouter)
 // Catch errors forwarded by next(err) so supertest gets a 500 response
@@ -55,14 +57,13 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 })
 
 // Using proper UUID v4 strings so the DraftIdParamSchema validation passes.
-const DRAFT_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'
-
 const mockDraft = {
   id: DRAFT_ID,
   title: 'How to reset password',
   content: 'Steps to reset...',
   status: 'PENDING_REVIEW' as const,
   clusterId: 'f0e1d2c3-b4a5-4968-8765-432100fedcba',
+  orgId: ORG_ID,
   publishedUrl: null,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -137,8 +138,6 @@ describe('GET /drafts', () => {
     expect(res.status).toBe(400)
     expect(res.body).toHaveProperty('error')
   })
-
-  // --- 7.2 smoke tests: all status filter values ---
 
   it('returns 200 with all drafts when no status filter is applied', async () => {
     vi.mocked(prisma.draft.findMany).mockResolvedValue([mockDraft] as never)
@@ -244,12 +243,42 @@ describe('GET /drafts/:id', () => {
 // PATCH /drafts/:id
 // ---------------------------------------------------------------------------
 describe('PATCH /drafts/:id', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // Default: draft exists with orgId, user is admin
+    vi.mocked(prisma.draft.findUnique).mockResolvedValue({ orgId: ORG_ID } as never)
+    vi.mocked(prisma.organizationMember.findFirst).mockResolvedValue(ADMIN_MEMBER as never)
+  })
 
   it('returns 400 when id is not a valid UUID', async () => {
     const res = await request(app).patch('/drafts/not-a-uuid').send({ title: 'x' })
     expect(res.status).toBe(400)
     expect(res.body).toHaveProperty('error')
+  })
+
+  it('returns 404 when draft does not exist', async () => {
+    vi.mocked(prisma.draft.findUnique).mockResolvedValue(null)
+    const res = await request(app).patch(`/drafts/${DRAFT_ID}`).send({ title: 'x' })
+    expect(res.status).toBe(404)
+  })
+
+  it('allows admin when draft orgId is null (legacy draft)', async () => {
+    vi.mocked(prisma.draft.findUnique).mockResolvedValue({ orgId: null } as never)
+    vi.mocked(prisma.draft.update).mockResolvedValue(mockDraft as never)
+    const res = await request(app).patch(`/drafts/${DRAFT_ID}`).send({ title: 'Updated' })
+    expect(res.status).toBe(200)
+    // Should query without orgId filter
+    expect(prisma.organizationMember.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.not.objectContaining({ orgId: expect.anything() }) }),
+    )
+  })
+
+  // --- A01: DB-level org admin check blocks non-admin users ---
+  it('returns 403 when caller is not an org admin', async () => {
+    vi.mocked(prisma.organizationMember.findFirst).mockResolvedValue(null)
+    const res = await request(app).patch(`/drafts/${DRAFT_ID}`).send({ title: 'x' })
+    expect(res.status).toBe(403)
+    expect(res.body.error).toMatch(/admin/)
   })
 
   it('updates and returns the draft with both fields', async () => {
@@ -284,7 +313,6 @@ describe('PATCH /drafts/:id', () => {
     const updated = { ...mockDraft, title: 'Synced title' }
     vi.mocked(prisma.draft.update).mockResolvedValue(updated as never)
     await request(app).patch(`/drafts/${DRAFT_ID}`).send({ title: 'Synced title' })
-    // firestoreDb.collection('drafts').doc(id).set(...)
     expect(firestoreDb.collection).toHaveBeenCalledWith('drafts')
   })
 
@@ -320,13 +348,16 @@ describe('PATCH /drafts/:id', () => {
 // POST /drafts/:id/approve
 // ---------------------------------------------------------------------------
 describe('POST /drafts/:id/approve', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // Default: draft exists (PENDING_REVIEW), user is org admin
+    vi.mocked(prisma.draft.findUnique).mockResolvedValue(mockDraft as never)
+    vi.mocked(prisma.organizationMember.findFirst).mockResolvedValue(ADMIN_MEMBER as never)
+  })
 
-  // --- A01: requireAdmin middleware blocks non-admin users ---
-  it('returns 403 when caller does not have admin claim', async () => {
-    vi.mocked(requireAdmin).mockImplementationOnce((_req, res: Response, _next) => {
-      res.status(403).json({ error: 'Forbidden — admin role required' })
-    })
+  // --- A01: DB-level org admin check blocks non-admin users ---
+  it('returns 403 when caller is not an org admin', async () => {
+    vi.mocked(prisma.organizationMember.findFirst).mockResolvedValue(null)
     const res = await request(app).post(`/drafts/${DRAFT_ID}/approve`)
     expect(res.status).toBe(403)
     expect(res.body.error).toMatch(/admin/)
@@ -366,7 +397,6 @@ describe('POST /drafts/:id/approve', () => {
   })
 
   it('sets status to APPROVED and enqueues publish job', async () => {
-    vi.mocked(prisma.draft.findUnique).mockResolvedValue(mockDraft as never)
     const approved = { ...mockDraft, status: 'APPROVED' }
     vi.mocked(prisma.draft.update).mockResolvedValue(approved as never)
     const res = await request(app).post(`/drafts/${DRAFT_ID}/approve`)
@@ -388,13 +418,16 @@ describe('POST /drafts/:id/approve', () => {
 // POST /drafts/:id/discard
 // ---------------------------------------------------------------------------
 describe('POST /drafts/:id/discard', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // Default: draft exists (PENDING_REVIEW), user is org admin
+    vi.mocked(prisma.draft.findUnique).mockResolvedValue(mockDraft as never)
+    vi.mocked(prisma.organizationMember.findFirst).mockResolvedValue(ADMIN_MEMBER as never)
+  })
 
-  // --- A01: requireAdmin middleware blocks non-admin users ---
-  it('returns 403 when caller does not have admin claim', async () => {
-    vi.mocked(requireAdmin).mockImplementationOnce((_req, res: Response, _next) => {
-      res.status(403).json({ error: 'Forbidden — admin role required' })
-    })
+  // --- A01: DB-level org admin check blocks non-admin users ---
+  it('returns 403 when caller is not an org admin', async () => {
+    vi.mocked(prisma.organizationMember.findFirst).mockResolvedValue(null)
     const res = await request(app).post(`/drafts/${DRAFT_ID}/discard`)
     expect(res.status).toBe(403)
     expect(res.body.error).toMatch(/admin/)
@@ -434,7 +467,6 @@ describe('POST /drafts/:id/discard', () => {
   })
 
   it('sets status to DISCARDED', async () => {
-    vi.mocked(prisma.draft.findUnique).mockResolvedValue(mockDraft as never)
     const discarded = { ...mockDraft, status: 'DISCARDED' }
     vi.mocked(prisma.draft.update).mockResolvedValue(discarded as never)
     const res = await request(app).post(`/drafts/${DRAFT_ID}/discard`)
@@ -445,7 +477,6 @@ describe('POST /drafts/:id/discard', () => {
   })
 
   it('does not enqueue a publish job when discarding', async () => {
-    vi.mocked(prisma.draft.findUnique).mockResolvedValue(mockDraft as never)
     const discarded = { ...mockDraft, status: 'DISCARDED' }
     vi.mocked(prisma.draft.update).mockResolvedValue(discarded as never)
     await request(app).post(`/drafts/${DRAFT_ID}/discard`)
