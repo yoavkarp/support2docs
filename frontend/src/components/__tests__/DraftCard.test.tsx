@@ -106,6 +106,38 @@ describe('DraftCard', () => {
     })
   })
 
+  describe('Hover state', () => {
+    it('onMouseEnter changes background to --color-surface-elevated', () => {
+      render(<DraftCard draft={baseDraft} onClick={vi.fn()} />)
+      const card = screen.getByRole('button', { name: /draft: how to reset your password/i })
+      fireEvent.mouseEnter(card)
+      expect(card.style.backgroundColor).toBe('var(--color-surface-elevated)')
+    })
+
+    it('onMouseEnter changes border color to --color-accent', () => {
+      render(<DraftCard draft={baseDraft} onClick={vi.fn()} />)
+      const card = screen.getByRole('button', { name: /draft: how to reset your password/i })
+      fireEvent.mouseEnter(card)
+      expect(card.style.borderColor).toBe('var(--color-accent)')
+    })
+
+    it('onMouseLeave resets background to --color-surface', () => {
+      render(<DraftCard draft={baseDraft} onClick={vi.fn()} />)
+      const card = screen.getByRole('button', { name: /draft: how to reset your password/i })
+      fireEvent.mouseEnter(card)
+      fireEvent.mouseLeave(card)
+      expect(card.style.backgroundColor).toBe('var(--color-surface)')
+    })
+
+    it('onMouseLeave resets border color to --color-border', () => {
+      render(<DraftCard draft={baseDraft} onClick={vi.fn()} />)
+      const card = screen.getByRole('button', { name: /draft: how to reset your password/i })
+      fireEvent.mouseEnter(card)
+      fireEvent.mouseLeave(card)
+      expect(card.style.borderColor).toBe('var(--color-border)')
+    })
+  })
+
   describe('Relative time', () => {
     beforeEach(() => {
       vi.spyOn(Date, 'now').mockReturnValue(NOW)

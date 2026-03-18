@@ -10,13 +10,10 @@
     "dev": "concurrently \"npm run dev --workspace=frontend\" \"npm run dev --workspace=backend\"",
     "lint": "npm run lint --workspaces",
     "test": "npm run test --workspaces",
-    "build": "npm run build --workspaces"
+    "build": "npm run build --workspaces",
+    "firebase:deploy": "firebase deploy"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
-    "vite": "^8.0.0"
-  },
-  "dependencies": {
-    "@testing-library/dom": "^10.4.1"
+    "concurrently": "^8.2.2"
   }
 }

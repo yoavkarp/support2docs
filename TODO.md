@@ -148,7 +148,7 @@ A `[SEC]` task must be completed before moving to the next phase:
 - [~] `[FE]` Update `OrgSummary` interface to include `memberCount`
 - [~] `[FE]` Add "Manage Teams" tab to `SettingsPage.tsx` and create `ManageTeamsTab.tsx`
 - [~] `[FE]` Update tests for `useOrgSettings`, `useOrgMembers`, and `SettingsPage` to mock `OrgContext`
-- [~] `[QA]` All 210 tests pass; TypeScript strict mode — zero errors
+- [x] `[QA]` All tests pass; coverage ≥ 80% on all metrics; TypeScript strict mode — zero errors
 
 ---
 
